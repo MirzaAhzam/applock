@@ -21,3 +21,4 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2.1.4
         with:
           command: check advisories bans licenses sources
+

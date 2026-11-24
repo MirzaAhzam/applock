@@ -1,5 +1,8 @@
 * text=auto eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
 *.bat text eol=crlf
 *.ps1 text eol=crlf
 *.iss text eol=crlf
 *.ico binary
+

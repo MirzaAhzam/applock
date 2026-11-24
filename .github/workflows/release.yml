@@ -91,3 +91,4 @@ jobs:
           gh release download "$TAG" --repo "$REPO" --pattern 'SHA256SUMS-*.txt' --dir sums
           cat sums/SHA256SUMS-*.txt > SHA256SUMS.txt
           gh release upload "$TAG" SHA256SUMS.txt --repo "$REPO" --clobber
+

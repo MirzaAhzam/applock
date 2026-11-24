@@ -16,3 +16,4 @@ indent_size = 2
 
 [*.{bat,ps1,iss}]
 end_of_line = crlf
+

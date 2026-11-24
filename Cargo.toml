@@ -37,3 +37,4 @@ panic = "abort"
 strip = "symbols"
 debug = false
 overflow-checks = true
+

@@ -17,3 +17,4 @@ lockui_cold_start = 150
 manager_cold_start = 500
 credential_check = 300
 unlocked_app_delay = 5
+

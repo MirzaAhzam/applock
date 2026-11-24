@@ -16,3 +16,4 @@
 - [ ] Fails closed on error
 - [ ] Input validated, size-limited
 - [ ] `cargo deny` clean
+
