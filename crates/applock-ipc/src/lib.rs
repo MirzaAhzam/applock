@@ -16,4 +16,3 @@ mod tests {
         assert_eq!(MAX_MESSAGE_BYTES, 16 * 1024);
     }
 }
-

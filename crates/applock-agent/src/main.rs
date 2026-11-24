@@ -8,4 +8,3 @@ fn main() {
     let (proto, pid) = runtime_summary();
     let _ = (proto, pid, PROTOCOL_VERSION, current_process_id());
 }
-

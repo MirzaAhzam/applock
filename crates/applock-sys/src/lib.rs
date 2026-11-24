@@ -17,4 +17,3 @@ mod tests {
         assert!(current_process_id() > 0);
     }
 }
-

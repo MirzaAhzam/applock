@@ -20,4 +20,3 @@ mod tests {
         assert!(pid > 0);
     }
 }
-
