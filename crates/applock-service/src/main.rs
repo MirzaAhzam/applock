@@ -107,10 +107,10 @@ fn run_bench_m0() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let p50_us = percentile(&samples, 50);
-    let p95_us = percentile(&samples, 95);
-    let p50_ms = f64::from(u32::try_from(p50_us).unwrap_or(u32::MAX)) / 1000.0;
-    let p95_ms = f64::from(u32::try_from(p95_us).unwrap_or(u32::MAX)) / 1000.0;
+    let median_micros = percentile(&samples, 50);
+    let tail_micros = percentile(&samples, 95);
+    let p50_ms = f64::from(u32::try_from(median_micros).unwrap_or(u32::MAX)) / 1000.0;
+    let p95_ms = f64::from(u32::try_from(tail_micros).unwrap_or(u32::MAX)) / 1000.0;
     let ram_mb = f64::from(u32::try_from(ram_bytes).unwrap_or(u32::MAX)) / (1024.0 * 1024.0);
 
     println!("M0 Service Benchmark Results:");
@@ -154,10 +154,11 @@ fn run_interactive_m0(args: &[String]) -> ExitCode {
             .and_then(|n| n.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !exe_name.is_empty() && watch_clone.iter().any(|w| w == &exe_name) {
-            if suspend_process(pid).is_ok() {
-                let _ = tx.send((pid, exe_name));
-            }
+        if !exe_name.is_empty()
+            && watch_clone.iter().any(|w| w == &exe_name)
+            && suspend_process(pid).is_ok()
+        {
+            let _ = tx.send((pid, exe_name));
         }
     }) {
         Ok(s) => s,
