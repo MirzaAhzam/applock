@@ -1,0 +1,20 @@
+# Hard performance and size limits from PRD.md section 7.1
+
+[sizes_bytes]
+applock_service = 2621440   # 2.5 MiB
+applock_agent = 1048576     # 1.0 MiB
+applock_lockui = 6291456    # 6.0 MiB
+applock_manager = 8388608   # 8.0 MiB
+installer = 10485760        # 10.0 MiB
+
+[ram_bytes]
+service_idle = 8388608      # 8.0 MiB
+agent_idle = 3145728        # 3.0 MiB
+
+[latency_ms]
+detect_to_frozen_p95 = 50
+lockui_cold_start = 150
+manager_cold_start = 500
+credential_check = 300
+unlocked_app_delay = 5
+

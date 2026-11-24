@@ -1,0 +1,14 @@
+/target
+/dist
+*.pdb
+*.pfx
+*.p12
+*.key
+*.pem
+.env
+.env.*
+secrets/
+/tests/perf/results/
+.vscode/*
+!.vscode/extensions.json
+
