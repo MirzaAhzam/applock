@@ -90,7 +90,9 @@ fn run_bench_m0() -> ExitCode {
     let cpu_after = current_cpu_time_100ns().unwrap_or(cpu_before);
     let wall_100ns = u64::try_from(wall_before.elapsed().as_nanos() / 100).unwrap_or(10_000_000);
     let cpu_delta = cpu_after.saturating_sub(cpu_before);
-    let idle_cpu_pct = (cpu_delta as f64 / wall_100ns.max(1) as f64) * 100.0;
+    let idle_cpu_pct = (f64::from(u32::try_from(cpu_delta).unwrap_or(u32::MAX))
+        / f64::from(u32::try_from(wall_100ns.max(1)).unwrap_or(u32::MAX)))
+        * 100.0;
 
     session.stop();
 
@@ -107,9 +109,9 @@ fn run_bench_m0() -> ExitCode {
 
     let p50_us = percentile(&samples, 50);
     let p95_us = percentile(&samples, 95);
-    let p50_ms = p50_us as f64 / 1000.0;
-    let p95_ms = p95_us as f64 / 1000.0;
-    let ram_mb = ram_bytes as f64 / (1024.0 * 1024.0);
+    let p50_ms = f64::from(u32::try_from(p50_us).unwrap_or(u32::MAX)) / 1000.0;
+    let p95_ms = f64::from(u32::try_from(p95_us).unwrap_or(u32::MAX)) / 1000.0;
+    let ram_mb = f64::from(u32::try_from(ram_bytes).unwrap_or(u32::MAX)) / (1024.0 * 1024.0);
 
     println!("M0 Service Benchmark Results:");
     println!("  captured_runs: {}/{total_runs}", samples.len());

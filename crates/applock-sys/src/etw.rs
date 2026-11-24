@@ -55,10 +55,10 @@ impl EtwSession {
     {
         let session_wide = to_wide_null(SESSION_NAME);
         let props_buf_len = size_of::<EVENT_TRACE_PROPERTIES>() + session_wide.len() * 2;
-        let mut props_buf = vec![0_u8; props_buf_len];
+        let mut props_buf = vec![0_u64; props_buf_len.div_ceil(size_of::<u64>())];
 
-        // SAFETY: `props_buf` is zeroed and large enough for `EVENT_TRACE_PROPERTIES` followed
-        // by the UTF-16 session name. `StartTraceW` initializes the session handle.
+        // SAFETY: `props_buf` is 8-byte aligned, zeroed, and large enough for
+        // `EVENT_TRACE_PROPERTIES` followed by the UTF-16 session name.
         let session_handle = unsafe {
             let props = props_buf.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
             (*props).Wnode.BufferSize = u32::try_from(props_buf_len).unwrap_or(0);
@@ -71,7 +71,7 @@ impl EtwSession {
             let mut handle = CONTROLTRACE_HANDLE { Value: 0 };
             let mut status = StartTraceW(&raw mut handle, session_wide.as_ptr(), props);
             if status == ERROR_ALREADY_EXISTS {
-                let mut stop_buf = vec![0_u8; props_buf_len];
+                let mut stop_buf = vec![0_u64; props_buf_len.div_ceil(size_of::<u64>())];
                 let stop_props = stop_buf.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
                 (*stop_props).Wnode.BufferSize = u32::try_from(props_buf_len).unwrap_or(0);
                 (*stop_props).LoggerNameOffset =
@@ -191,7 +191,7 @@ impl Drop for EtwSession {
 
 unsafe fn stop_trace_by_handle(session_handle: CONTROLTRACE_HANDLE) {
     let props_buf_len = size_of::<EVENT_TRACE_PROPERTIES>() + 256;
-    let mut props_buf = vec![0_u8; props_buf_len];
+    let mut props_buf = vec![0_u64; props_buf_len.div_ceil(size_of::<u64>())];
     let props = props_buf.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
     (*props).Wnode.BufferSize = u32::try_from(props_buf_len).unwrap_or(0);
     let _ = ControlTraceW(session_handle, ptr::null(), props, EVENT_TRACE_CONTROL_STOP);
