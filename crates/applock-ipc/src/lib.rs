@@ -1,4 +1,4 @@
-//! Pure IPC message definitions and protocol constants for AppLock.
+//! Pure IPC message definitions and protocol constants for `AppLock`.
 
 /// Current IPC protocol version.
 pub const PROTOCOL_VERSION: u16 = 1;
@@ -13,6 +13,7 @@ mod tests {
     #[test]
     fn protocol_constants_are_valid() {
         assert_eq!(PROTOCOL_VERSION, 1);
-        assert!(MAX_MESSAGE_BYTES > 0);
+        assert_eq!(MAX_MESSAGE_BYTES, 16 * 1024);
     }
 }
+

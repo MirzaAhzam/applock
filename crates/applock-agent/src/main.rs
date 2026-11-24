@@ -1,4 +1,4 @@
-//! AppLock user-session agent binary (foundation stub).
+//! `AppLock` user-session agent binary (foundation stub).
 
 use applock_core::runtime_summary;
 use applock_ipc::PROTOCOL_VERSION;
@@ -8,3 +8,4 @@ fn main() {
     let (proto, pid) = runtime_summary();
     let _ = (proto, pid, PROTOCOL_VERSION, current_process_id());
 }
+

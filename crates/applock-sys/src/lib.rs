@@ -1,4 +1,4 @@
-//! Thin safe wrappers over Windows APIs for AppLock.
+//! Thin safe wrappers over Windows APIs for `AppLock`.
 //!
 //! All `unsafe` code in the workspace (outside v2 shell extensions) lives in this crate.
 
@@ -17,3 +17,4 @@ mod tests {
         assert!(current_process_id() > 0);
     }
 }
+

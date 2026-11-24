@@ -1,4 +1,4 @@
-//! Build, budget verification, and packaging helpers for AppLock.
+//! Build, budget verification, and packaging helpers for `AppLock`.
 
 use std::env;
 use std::fs;
@@ -68,3 +68,4 @@ fn package_stub() -> ExitCode {
     eprintln!("xtask package: stub — installer packaging is not implemented yet");
     ExitCode::FAILURE
 }
+

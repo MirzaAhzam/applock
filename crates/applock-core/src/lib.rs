@@ -1,4 +1,4 @@
-//! Core AppLock rules, configuration types, and security state machines.
+//! Core `AppLock` rules, configuration types, and security state machines.
 
 use applock_ipc::PROTOCOL_VERSION;
 use applock_sys::current_process_id;
@@ -20,3 +20,4 @@ mod tests {
         assert!(pid > 0);
     }
 }
+

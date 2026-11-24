@@ -13,3 +13,4 @@ applock-sys = { path = "../applock-sys" }
 
 [lints]
 workspace = true
+
