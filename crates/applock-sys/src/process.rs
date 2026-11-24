@@ -3,18 +3,17 @@
 use std::mem::{size_of, zeroed};
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{CloseHandle, FILETIME, GetLastError, HANDLE, NTSTATUS};
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, FILETIME, HANDLE, NTSTATUS};
 use windows_sys::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, CREATE_NO_WINDOW, GetCurrentProcess, GetProcessTimes, OpenProcess,
-    PROCESS_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME,
-    PROCESS_TERMINATE, QueryFullProcessImageNameW, STARTUPINFOW, TerminateProcess,
-    WaitForSingleObject,
+    CreateProcessW, GetCurrentProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
+    TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW, PROCESS_INFORMATION,
+    PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, STARTUPINFOW,
 };
 
-use crate::{WinError, to_wide_null};
+use crate::{to_wide_null, WinError};
 
 #[link(name = "ntdll")]
 unsafe extern "system" {

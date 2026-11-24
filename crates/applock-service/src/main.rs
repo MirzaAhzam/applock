@@ -9,7 +9,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use applock_sys::etw::EtwSession;
-use applock_sys::lock_dialog::{LockPromptOutcome, show_m0_lock_prompt};
+use applock_sys::lock_dialog::{show_m0_lock_prompt, LockPromptOutcome};
 use applock_sys::process::{
     current_cpu_time_100ns, current_private_memory_bytes, launch_hidden_command, resume_process,
     suspend_process, terminate_process, wait_process_exit,

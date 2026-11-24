@@ -2,21 +2,21 @@
 
 use std::mem::{size_of, zeroed};
 use std::ptr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
+use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS};
 use windows_sys::Win32::System::Diagnostics::Etw::{
-    CloseTrace, ControlTraceW, ENABLE_TRACE_PARAMETERS, EVENT_CONTROL_CODE_ENABLE_PROVIDER,
-    EVENT_RECORD, EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
-    EVENT_TRACE_REAL_TIME_MODE, EnableTraceEx2, OpenTraceW, PROCESSTRACE_HANDLE,
-    PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, ProcessTrace, StartTraceW,
-    TRACE_LEVEL_INFORMATION, WNODE_FLAG_TRACED_GUID,
+    CloseTrace, ControlTraceW, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW,
+    ENABLE_TRACE_PARAMETERS, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
+    EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
+    EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
+    PROCESS_TRACE_MODE_REAL_TIME, TRACE_LEVEL_INFORMATION, WNODE_FLAG_TRACED_GUID,
 };
-use windows_sys::core::GUID;
 
-use crate::{WinError, process::query_image_path, to_wide_null};
+use crate::{process::query_image_path, to_wide_null, WinError};
 
 const SESSION_NAME: &str = "AppLockM0Trace";
 const KERNEL_PROCESS_GUID: GUID = GUID {
@@ -65,7 +65,8 @@ impl EtwSession {
             (*props).Wnode.Flags = WNODE_FLAG_TRACED_GUID;
             (*props).Wnode.ClientContext = 1;
             (*props).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-            (*props).LoggerNameOffset = u32::try_from(size_of::<EVENT_TRACE_PROPERTIES>()).unwrap_or(0);
+            (*props).LoggerNameOffset =
+                u32::try_from(size_of::<EVENT_TRACE_PROPERTIES>()).unwrap_or(0);
 
             let mut handle: u64 = 0;
             let mut status = StartTraceW(&raw mut handle, session_wide.as_ptr(), props);
@@ -191,12 +192,7 @@ unsafe fn stop_trace_by_handle(session_handle: u64) {
     let mut props_buf = vec![0_u8; props_buf_len];
     let props = props_buf.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();
     (*props).Wnode.BufferSize = u32::try_from(props_buf_len).unwrap_or(0);
-    let _ = ControlTraceW(
-        session_handle,
-        ptr::null(),
-        props,
-        EVENT_TRACE_CONTROL_STOP,
-    );
+    let _ = ControlTraceW(session_handle, ptr::null(), props, EVENT_TRACE_CONTROL_STOP);
 }
 
 unsafe extern "system" fn event_record_callback(event_record: *mut EVENT_RECORD) {

@@ -3,14 +3,13 @@
 use std::cell::RefCell;
 
 use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
-use windows_sys::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
+use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EVENT_SYSTEM_FOREGROUND, EnumChildWindows, GetMessageW,
-    GetWindowThreadProcessId, MSG, TranslateMessage, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS,
+    DispatchMessageW, EnumChildWindows, GetMessageW, GetWindowThreadProcessId, TranslateMessage,
+    EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
 
-use crate::{WinError, process::query_image_path};
+use crate::{process::query_image_path, WinError};
 
 type ForegroundHandler = Box<dyn FnMut(u32, &str)>;
 
@@ -97,7 +96,10 @@ fn resolve_window_owner(hwnd: HWND) -> Option<(u32, String)> {
         return None;
     }
     let path = query_image_path(pid).unwrap_or_default();
-    if path.to_ascii_lowercase().ends_with("applicationframehost.exe") {
+    if path
+        .to_ascii_lowercase()
+        .ends_with("applicationframehost.exe")
+    {
         let mut child_state = UwpSearch {
             host_pid: pid,
             found: None,

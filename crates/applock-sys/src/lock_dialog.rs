@@ -4,14 +4,14 @@ use std::mem::zeroed;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{COLOR_WINDOW, DEFAULT_GUI_FONT, GetStockObject};
+use windows_sys::Win32::Graphics::Gdi::{GetStockObject, COLOR_WINDOW, DEFAULT_GUI_FONT};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CreateWindowExW, DefWindowProcW, DestroyWindow,
-    DispatchMessageW, ES_PASSWORD, GetMessageW, GetWindowLongPtrW, GetWindowTextW, GWLP_USERDATA,
-    IDOK, MSG, PostQuitMessage, RegisterClassW, SW_SHOW, SetFocus, SetForegroundWindow,
-    SetWindowLongPtrW, ShowWindow, TranslateMessage, WM_COMMAND, WM_CREATE, WM_DESTROY,
-    WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST, WS_SYSMENU,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
+    GetWindowLongPtrW, GetWindowTextW, PostQuitMessage, RegisterClassW, SetFocus,
+    SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage, BS_DEFPUSHBUTTON,
+    BS_PUSHBUTTON, ES_PASSWORD, GWLP_USERDATA, IDOK, MSG, SW_SHOW, WM_COMMAND, WM_CREATE,
+    WM_DESTROY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_EX_TOPMOST, WS_SYSMENU,
     WS_TABSTOP, WS_VISIBLE,
 };
 
