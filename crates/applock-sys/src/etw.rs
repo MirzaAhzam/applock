@@ -146,14 +146,16 @@ impl EtwSession {
         }
 
         let worker_handle_val = trace_handle.Value;
+        let ctx_addr = ctx_ptr as usize;
         let worker = thread::spawn(move || {
             let h = PROCESSTRACE_HANDLE {
                 Value: worker_handle_val,
             };
-            // SAFETY: `h` is a valid open trace handle and `ctx_ptr` stays alive until `join`.
+            // SAFETY: `h` is a valid open trace handle and `ctx_addr` points to a
+            // uniquely-owned `CallbackContext` that stays alive until `ProcessTrace` returns.
             unsafe {
                 let _ = ProcessTrace(&raw const h, 1, ptr::null(), ptr::null());
-                drop(Box::from_raw(ctx_ptr));
+                drop(Box::from_raw(ctx_addr as *mut CallbackContext));
             }
         });
 
