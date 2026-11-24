@@ -45,7 +45,9 @@ jobs:
         shell: pwsh
         run: |
           $svc = .\target\release\applock-service.exe --bench-m0 2>&1 | Out-String
+          $svc_exit = $LASTEXITCODE
           $agt = .\target\release\applock-agent.exe --bench-m0 2>&1 | Out-String
+          $agt_exit = $LASTEXITCODE
           Write-Output $svc
           Write-Output $agt
           "## M0 Headless Benchmark" >> $env:GITHUB_STEP_SUMMARY
@@ -53,6 +55,7 @@ jobs:
           $svc >> $env:GITHUB_STEP_SUMMARY
           $agt >> $env:GITHUB_STEP_SUMMARY
           '```' >> $env:GITHUB_STEP_SUMMARY
+          if ($svc_exit -ne 0 -or $agt_exit -ne 0) { exit 1 }
 
       - name: Write size and budget summary
         shell: pwsh

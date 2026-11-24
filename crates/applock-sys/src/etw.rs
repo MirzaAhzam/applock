@@ -10,7 +10,7 @@ use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS};
 use windows_sys::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW,
-    CONTROLTRACE_HANDLE, ENABLE_TRACE_PARAMETERS, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
+    CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
     EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
     EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
     PROCESS_TRACE_MODE_REAL_TIME, TRACE_LEVEL_INFORMATION, WNODE_FLAG_TRACED_GUID,
@@ -92,7 +92,6 @@ impl EtwSession {
                 });
             }
 
-            let enable_params: ENABLE_TRACE_PARAMETERS = zeroed();
             let enable_status = EnableTraceEx2(
                 handle,
                 &raw const KERNEL_PROCESS_GUID,
@@ -101,7 +100,7 @@ impl EtwSession {
                 WINEVENT_KEYWORD_PROCESS,
                 0,
                 0,
-                &raw const enable_params,
+                ptr::null(),
             );
             if enable_status != ERROR_SUCCESS {
                 let _ = ControlTraceW(handle, ptr::null(), props, EVENT_TRACE_CONTROL_STOP);
