@@ -40,7 +40,7 @@ pub fn suspend_process(pid: u32) -> Result<(), WinError> {
         CloseHandle(handle);
         if status < 0 {
             return Err(WinError {
-                code: status.cast_unsigned(),
+                code: u32::from_ne_bytes(status.to_ne_bytes()),
                 context: "NtSuspendProcess",
             });
         }
@@ -67,7 +67,7 @@ pub fn resume_process(pid: u32) -> Result<(), WinError> {
         CloseHandle(handle);
         if status < 0 {
             return Err(WinError {
-                code: status.cast_unsigned(),
+                code: u32::from_ne_bytes(status.to_ne_bytes()),
                 context: "NtResumeProcess",
             });
         }

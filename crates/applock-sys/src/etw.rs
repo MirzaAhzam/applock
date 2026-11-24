@@ -10,7 +10,7 @@ use windows_sys::core::GUID;
 use windows_sys::Win32::Foundation::{ERROR_ALREADY_EXISTS, ERROR_SUCCESS};
 use windows_sys::Win32::System::Diagnostics::Etw::{
     CloseTrace, ControlTraceW, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW,
-    ENABLE_TRACE_PARAMETERS, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
+    CONTROLTRACE_HANDLE, ENABLE_TRACE_PARAMETERS, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_RECORD,
     EVENT_TRACE_CONTROL_STOP, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES,
     EVENT_TRACE_REAL_TIME_MODE, PROCESSTRACE_HANDLE, PROCESS_TRACE_MODE_EVENT_RECORD,
     PROCESS_TRACE_MODE_REAL_TIME, TRACE_LEVEL_INFORMATION, WNODE_FLAG_TRACED_GUID,
@@ -19,7 +19,7 @@ use windows_sys::Win32::System::Diagnostics::Etw::{
 use crate::{process::query_image_path, to_wide_null, WinError};
 
 const SESSION_NAME: &str = "AppLockM0Trace";
-const KERNEL_PROCESS_GUID: GUID = GUID {
+static KERNEL_PROCESS_GUID: GUID = GUID {
     data1: 0x22FB_2CD6,
     data2: 0x0E7B,
     data3: 0x422B,
@@ -38,7 +38,7 @@ struct CallbackContext {
 
 /// Active real-time ETW process-start trace session.
 pub struct EtwSession {
-    session_handle: u64,
+    session_handle: CONTROLTRACE_HANDLE,
     trace_handle: PROCESSTRACE_HANDLE,
     running: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
@@ -68,7 +68,7 @@ impl EtwSession {
             (*props).LoggerNameOffset =
                 u32::try_from(size_of::<EVENT_TRACE_PROPERTIES>()).unwrap_or(0);
 
-            let mut handle: u64 = 0;
+            let mut handle = CONTROLTRACE_HANDLE { Value: 0 };
             let mut status = StartTraceW(&raw mut handle, session_wide.as_ptr(), props);
             if status == ERROR_ALREADY_EXISTS {
                 let mut stop_buf = vec![0_u8; props_buf_len];
@@ -77,12 +77,12 @@ impl EtwSession {
                 (*stop_props).LoggerNameOffset =
                     u32::try_from(size_of::<EVENT_TRACE_PROPERTIES>()).unwrap_or(0);
                 let _ = ControlTraceW(
-                    0,
+                    CONTROLTRACE_HANDLE { Value: 0 },
                     session_wide.as_ptr(),
                     stop_props,
                     EVENT_TRACE_CONTROL_STOP,
                 );
-                handle = 0;
+                handle = CONTROLTRACE_HANDLE { Value: 0 };
                 status = StartTraceW(&raw mut handle, session_wide.as_ptr(), props);
             }
             if status != ERROR_SUCCESS {
@@ -187,7 +187,7 @@ impl Drop for EtwSession {
     }
 }
 
-unsafe fn stop_trace_by_handle(session_handle: u64) {
+unsafe fn stop_trace_by_handle(session_handle: CONTROLTRACE_HANDLE) {
     let props_buf_len = size_of::<EVENT_TRACE_PROPERTIES>() + 256;
     let mut props_buf = vec![0_u8; props_buf_len];
     let props = props_buf.as_mut_ptr().cast::<EVENT_TRACE_PROPERTIES>();

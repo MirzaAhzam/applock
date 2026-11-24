@@ -2,7 +2,8 @@
 
 use std::cell::RefCell;
 
-use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM};
+use windows_sys::core::BOOL;
+use windows_sys::Win32::Foundation::{HWND, LPARAM};
 use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, EnumChildWindows, GetMessageW, GetWindowThreadProcessId, TranslateMessage,
