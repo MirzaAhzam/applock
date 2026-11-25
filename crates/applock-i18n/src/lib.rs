@@ -124,7 +124,7 @@ pub struct ManagerStrings {
     pub limits_admin: String,
     /// Honest limit: safe mode.
     pub limits_safemode: String,
-    /// Honest limit: disk without BitLocker.
+    /// Honest limit: disk without `BitLocker`.
     pub limits_disk: String,
 }
 
