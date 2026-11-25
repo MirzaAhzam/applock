@@ -1,0 +1,29 @@
+[package]
+name = "applock-manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+applock-i18n = { path = "../applock-i18n" }
+applock-ipc = { path = "../applock-ipc" }
+applock-sys = { path = "../applock-sys" }
+slint = { version = "=1.9.2", default-features = false, features = ["compat-1-2", "backend-winit", "renderer-software", "std"] }
+
+[build-dependencies]
+slint-build = "=1.9.2"
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+dbg_macro = "deny"

@@ -177,6 +177,87 @@ fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response 
                 lockout_remaining_secs,
             }
         }
+        Ok(Request::ListLockedApps { nonce }) => {
+            let mut apps: Vec<String> = state
+                .lock()
+                .map(|g| {
+                    g.config
+                        .locked_apps
+                        .iter()
+                        .map(|a| a.app_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            apps.sort();
+            Response::LockedApps { nonce, apps }
+        }
+        Ok(Request::SetAppLocked {
+            nonce,
+            app_id,
+            locked,
+        }) => {
+            let normalized = app_id.trim().to_ascii_lowercase();
+            let ok = if normalized.is_empty() || normalized.starts_with("applock-") {
+                false
+            } else if let Ok(mut guard) = state.lock() {
+                if locked {
+                    if !guard
+                        .config
+                        .locked_apps
+                        .iter()
+                        .any(|a| a.app_id.eq_ignore_ascii_case(&normalized))
+                    {
+                        guard.config.locked_apps.push(LockedApp {
+                            app_id: normalized,
+                            mode: LockMode::Always,
+                        });
+                    }
+                } else {
+                    guard
+                        .config
+                        .locked_apps
+                        .retain(|a| !a.app_id.eq_ignore_ascii_case(&normalized));
+                }
+                guard.rules = RuleEngine::from_apps(&guard.config.locked_apps);
+                let cfg_clone = guard.config.clone();
+                let path_clone = guard.config_path.clone();
+                save_atomic(&path_clone, &cfg_clone).is_ok()
+            } else {
+                false
+            };
+            Response::Ack { nonce, ok }
+        }
+        Ok(Request::ChangePin {
+            nonce,
+            current_secret,
+            new_secret,
+        }) => {
+            let (allowed, rem) = verify_and_update(state, &current_secret, None);
+            if !allowed || new_secret.len() < 4 {
+                return Response::CredentialResult {
+                    nonce,
+                    allowed: false,
+                    lockout_remaining_secs: rem,
+                };
+            }
+            let updated = if let Ok(new_hash) = hash_secret(&new_secret) {
+                if let Ok(mut guard) = state.lock() {
+                    guard.config.pin_hash = Some(new_hash);
+                    let cfg_clone = guard.config.clone();
+                    let path_clone = guard.config_path.clone();
+                    save_atomic(&path_clone, &cfg_clone).is_ok()
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            Response::CredentialResult {
+                nonce,
+                allowed: updated,
+                lockout_remaining_secs: 0,
+            }
+        }
         Err(_) => Response::Error {
             nonce: [0_u8; 16],
             code: 400,

@@ -1,0 +1,661 @@
+import { Tokens } from "../tokens.slint";
+export { Tokens }
+
+export struct AppEntry {
+    name: string,
+    locked: bool,
+}
+
+export component ManagerWindow inherits Window {
+    // Gate state
+    in property <bool> unlocked: false;
+    in property <string> gate-prompt: "Enter your PIN or password to open AppLock Manager.";
+    in property <string> pin-placeholder: "PIN or password";
+    in property <string> unlock-label: "Unlock";
+    in property <string> gate-error: "";
+    in-out property <string> gate-pin: "";
+
+    // Navigation & labels
+    in property <string> window-title: "AppLock Manager";
+    in-out property <int> active-tab: 0;
+    in property <string> tab-apps-label: "Apps";
+    in property <string> tab-security-label: "Security";
+    in property <string> tab-limits-label: "Honest limits";
+
+    // Apps tab
+    in property <[AppEntry]> apps: [];
+    in property <string> search-placeholder: "Search apps";
+    in-out property <string> search-query: "";
+    in property <string> add-placeholder: "Add executable (for example: whatsapp.exe)";
+    in-out property <string> add-input: "";
+    in property <string> add-button-label: "Lock app";
+    in property <string> empty-apps-label: "No apps locked yet. Choose an app from the list.";
+    in property <string> locked-label: "Locked";
+    in property <string> unlocked-label: "Unlocked";
+
+    // Security tab
+    in property <string> current-pin-label: "Current PIN or password";
+    in property <string> new-pin-label: "New PIN or password (at least 4 characters)";
+    in property <string> confirm-pin-label: "Confirm new PIN or password";
+    in property <string> save-pin-label: "Save new PIN";
+    in-out property <string> current-pin-input: "";
+    in-out property <string> new-pin-input: "";
+    in-out property <string> confirm-pin-input: "";
+    in property <string> security-status: "";
+    in property <bool> security-is-error: false;
+    in property <string> lang-label: "Language";
+    in property <string> theme-label: "Dark theme";
+
+    // Limits tab
+    in property <string> limits-intro: "";
+    in property <string> limits-admin: "";
+    in property <string> limits-safemode: "";
+    in property <string> limits-disk: "";
+
+    callback gate-submitted(string);
+    callback search-changed(string);
+    callback add-app-submitted(string);
+    callback toggle-app(string, bool);
+    callback change-pin-submitted(string, string, string);
+    callback toggle-language();
+    callback toggle-theme();
+
+    title: root.window-title;
+    min-width: 680px;
+    min-height: 460px;
+    preferred-width: 760px;
+    preferred-height: 520px;
+    background: Tokens.bg;
+    default-font-family: Tokens.font-family;
+
+    if !root.unlocked: Rectangle {
+        width: 100%;
+        height: 100%;
+        background: Tokens.bg;
+
+        Rectangle {
+            width: 400px;
+            height: 230px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Tokens.surface;
+            border-color: Tokens.border;
+            border-width: 1px;
+            border-radius: Tokens.radius-dialog;
+
+            VerticalLayout {
+                padding: Tokens.space-lg;
+                spacing: Tokens.space-md;
+
+                Text {
+                    text: root.window-title;
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                Text {
+                    text: root.gate-prompt;
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-body;
+                    wrap: word-wrap;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                Rectangle {
+                    height: 38px;
+                    background: Tokens.surface;
+                    border-radius: Tokens.radius-control;
+                    border-width: gate-field.has-focus || root.gate-error != "" ? Tokens.focus-ring : 1px;
+                    border-color: root.gate-error != "" ? Tokens.danger : (gate-field.has-focus ? Tokens.accent : Tokens.border);
+
+                    gate-field := TextInput {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text <=> root.gate-pin;
+                        input-type: password;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                        accepted => {
+                            root.gate-submitted(root.gate-pin);
+                        }
+                    }
+
+                    if root.gate-pin == "": Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text: root.pin-placeholder;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                if root.gate-error != "": Text {
+                    text: root.gate-error;
+                    color: Tokens.danger;
+                    font-size: Tokens.font-caption;
+                    wrap: word-wrap;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                Rectangle {
+                    height: 38px;
+                    border-radius: Tokens.radius-control;
+                    background: gate-btn-touch.pressed ? Tokens.text : Tokens.accent;
+                    border-width: gate-btn-focus.has-focus ? Tokens.focus-ring : 0px;
+                    border-color: Tokens.text;
+
+                    gate-btn-focus := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Return || event.text == " ") {
+                                root.gate-submitted(root.gate-pin);
+                                accept
+                            }
+                            reject
+                        }
+                    }
+
+                    gate-btn-touch := TouchArea {
+                        clicked => {
+                            root.gate-submitted(root.gate-pin);
+                        }
+                    }
+
+                    Text {
+                        text: root.unlock-label;
+                        color: Tokens.on-accent;
+                        font-size: Tokens.font-body;
+                        font-weight: 600;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+            }
+        }
+    }
+
+    if root.unlocked: HorizontalLayout {
+        width: 100%;
+        height: 100%;
+
+        // Sidebar
+        Rectangle {
+            width: 190px;
+            background: Tokens.surface;
+            border-color: Tokens.border;
+            border-width: 1px;
+
+            VerticalLayout {
+                padding: Tokens.space-md;
+                spacing: Tokens.space-sm;
+                alignment: start;
+
+                Text {
+                    text: root.window-title;
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                Rectangle { height: Tokens.space-sm; }
+
+                for nav in [
+                    { idx: 0, label: root.tab-apps-label },
+                    { idx: 1, label: root.tab-security-label },
+                    { idx: 2, label: root.tab-limits-label },
+                ]: Rectangle {
+                    height: 36px;
+                    border-radius: Tokens.radius-control;
+                    background: root.active-tab == nav.idx ? Tokens.accent : (nav-touch.has-hover ? Tokens.bg : transparent);
+                    border-width: nav-focus.has-focus ? Tokens.focus-ring : 0px;
+                    border-color: Tokens.accent;
+
+                    nav-focus := FocusScope {
+                        key-pressed(event) => {
+                            if (event.text == Key.Return || event.text == " ") {
+                                root.active-tab = nav.idx;
+                                accept
+                            }
+                            reject
+                        }
+                    }
+
+                    nav-touch := TouchArea {
+                        clicked => {
+                            root.active-tab = nav.idx;
+                        }
+                    }
+
+                    Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text: nav.label;
+                        color: root.active-tab == nav.idx ? Tokens.on-accent : Tokens.text;
+                        font-size: Tokens.font-body;
+                        font-weight: root.active-tab == nav.idx ? 600 : 400;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+            }
+        }
+
+        // Main content area
+        Rectangle {
+            background: Tokens.bg;
+
+            // Tab 0: Apps
+            if root.active-tab == 0: VerticalLayout {
+                padding: Tokens.space-lg;
+                spacing: Tokens.space-md;
+                alignment: start;
+
+                // Search bar
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.surface;
+                    border-radius: Tokens.radius-control;
+                    border-width: search-input-box.has-focus ? Tokens.focus-ring : 1px;
+                    border-color: search-input-box.has-focus ? Tokens.accent : Tokens.border;
+
+                    search-input-box := TextInput {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text <=> root.search-query;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                        edited => {
+                            root.search-changed(self.text);
+                        }
+                    }
+
+                    if root.search-query == "": Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text: root.search-placeholder;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                // Add custom executable row
+                HorizontalLayout {
+                    spacing: Tokens.space-sm;
+
+                    Rectangle {
+                        height: 36px;
+                        background: Tokens.surface;
+                        border-radius: Tokens.radius-control;
+                        border-width: add-field.has-focus ? Tokens.focus-ring : 1px;
+                        border-color: add-field.has-focus ? Tokens.accent : Tokens.border;
+
+                        add-field := TextInput {
+                            x: Tokens.space-sm;
+                            width: parent.width - Tokens.space-sm * 2;
+                            height: 100%;
+                            text <=> root.add-input;
+                            color: Tokens.text;
+                            font-size: Tokens.font-body;
+                            vertical-alignment: center;
+                            horizontal-alignment: Tokens.rtl ? right : left;
+                            accepted => {
+                                root.add-app-submitted(root.add-input);
+                            }
+                        }
+
+                        if root.add-input == "": Text {
+                            x: Tokens.space-sm;
+                            width: parent.width - Tokens.space-sm * 2;
+                            height: 100%;
+                            text: root.add-placeholder;
+                            color: Tokens.text-muted;
+                            font-size: Tokens.font-body;
+                            vertical-alignment: center;
+                            horizontal-alignment: Tokens.rtl ? right : left;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 110px;
+                        height: 36px;
+                        border-radius: Tokens.radius-control;
+                        background: add-btn-touch.pressed ? Tokens.text : Tokens.accent;
+
+                        add-btn-touch := TouchArea {
+                            clicked => {
+                                root.add-app-submitted(root.add-input);
+                            }
+                        }
+
+                        Text {
+                            text: root.add-button-label;
+                            color: Tokens.on-accent;
+                            font-size: Tokens.font-body;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // Empty state
+                if root.apps.length == 0: Rectangle {
+                    height: 64px;
+                    background: Tokens.surface;
+                    border-color: Tokens.border;
+                    border-width: 1px;
+                    border-radius: Tokens.radius-control;
+
+                    Text {
+                        x: Tokens.space-md;
+                        width: parent.width - Tokens.space-md * 2;
+                        height: 100%;
+                        text: root.empty-apps-label;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                // App rows
+                for entry in root.apps: Rectangle {
+                    height: 44px;
+                    background: Tokens.surface;
+                    border-color: Tokens.border;
+                    border-width: 1px;
+                    border-radius: Tokens.radius-control;
+
+                    HorizontalLayout {
+                        padding-left: Tokens.space-md;
+                        padding-right: Tokens.space-md;
+                        spacing: Tokens.space-sm;
+
+                        Text {
+                            text: entry.name;
+                            color: Tokens.text;
+                            font-size: Tokens.font-body;
+                            vertical-alignment: center;
+                            horizontal-alignment: Tokens.rtl ? right : left;
+                        }
+
+                        Rectangle {
+                            width: 96px;
+                            height: 28px;
+                            y: 8px;
+                            border-radius: Tokens.radius-control;
+                            background: entry.locked ? Tokens.accent : Tokens.bg;
+                            border-color: Tokens.border;
+                            border-width: entry.locked ? 0px : 1px;
+
+                            TouchArea {
+                                clicked => {
+                                    root.toggle-app(entry.name, !entry.locked);
+                                }
+                            }
+
+                            Text {
+                                text: entry.locked ? root.locked-label : root.unlocked-label;
+                                color: entry.locked ? Tokens.on-accent : Tokens.text;
+                                font-size: Tokens.font-caption;
+                                font-weight: 600;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tab 1: Security
+            if root.active-tab == 1: VerticalLayout {
+                padding: Tokens.space-lg;
+                spacing: Tokens.space-md;
+                alignment: start;
+
+                Text {
+                    text: root.tab-security-label;
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.surface;
+                    border-radius: Tokens.radius-control;
+                    border-width: curr-pin.has-focus ? Tokens.focus-ring : 1px;
+                    border-color: curr-pin.has-focus ? Tokens.accent : Tokens.border;
+
+                    curr-pin := TextInput {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text <=> root.current-pin-input;
+                        input-type: password;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+
+                    if root.current-pin-input == "": Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text: root.current-pin-label;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.surface;
+                    border-radius: Tokens.radius-control;
+                    border-width: new-pin.has-focus ? Tokens.focus-ring : 1px;
+                    border-color: new-pin.has-focus ? Tokens.accent : Tokens.border;
+
+                    new-pin := TextInput {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text <=> root.new-pin-input;
+                        input-type: password;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+
+                    if root.new-pin-input == "": Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text: root.new-pin-label;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                Rectangle {
+                    height: 36px;
+                    background: Tokens.surface;
+                    border-radius: Tokens.radius-control;
+                    border-width: conf-pin.has-focus ? Tokens.focus-ring : 1px;
+                    border-color: conf-pin.has-focus ? Tokens.accent : Tokens.border;
+
+                    conf-pin := TextInput {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text <=> root.confirm-pin-input;
+                        input-type: password;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+
+                    if root.confirm-pin-input == "": Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: 100%;
+                        text: root.confirm-pin-label;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                if root.security-status != "": Text {
+                    text: root.security-status;
+                    color: root.security-is-error ? Tokens.danger : Tokens.accent;
+                    font-size: Tokens.font-caption;
+                    wrap: word-wrap;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                HorizontalLayout {
+                    spacing: Tokens.space-sm;
+
+                    Rectangle {
+                        width: 150px;
+                        height: 36px;
+                        border-radius: Tokens.radius-control;
+                        background: Tokens.accent;
+
+                        TouchArea {
+                            clicked => {
+                                root.change-pin-submitted(
+                                    root.current-pin-input,
+                                    root.new-pin-input,
+                                    root.confirm-pin-input,
+                                );
+                            }
+                        }
+
+                        Text {
+                            text: root.save-pin-label;
+                            color: Tokens.on-accent;
+                            font-size: Tokens.font-body;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 130px;
+                        height: 36px;
+                        border-radius: Tokens.radius-control;
+                        background: Tokens.surface;
+                        border-color: Tokens.border;
+                        border-width: 1px;
+
+                        TouchArea {
+                            clicked => {
+                                root.toggle-language();
+                            }
+                        }
+
+                        Text {
+                            text: root.lang-label + ": " + (Tokens.rtl ? "اردو" : "EN");
+                            color: Tokens.text;
+                            font-size: Tokens.font-body;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 130px;
+                        height: 36px;
+                        border-radius: Tokens.radius-control;
+                        background: Tokens.surface;
+                        border-color: Tokens.border;
+                        border-width: 1px;
+
+                        TouchArea {
+                            clicked => {
+                                root.toggle-theme();
+                            }
+                        }
+
+                        Text {
+                            text: root.theme-label;
+                            color: Tokens.text;
+                            font-size: Tokens.font-body;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            // Tab 2: Honest limits
+            if root.active-tab == 2: VerticalLayout {
+                padding: Tokens.space-lg;
+                spacing: Tokens.space-md;
+                alignment: start;
+
+                Text {
+                    text: root.tab-limits-label;
+                    color: Tokens.text;
+                    font-size: Tokens.font-title;
+                    font-weight: 600;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                Text {
+                    text: root.limits-intro;
+                    color: Tokens.text;
+                    font-size: Tokens.font-body;
+                    wrap: word-wrap;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                for item in [root.limits-admin, root.limits-safemode, root.limits-disk]: Rectangle {
+                    height: 44px;
+                    background: Tokens.surface;
+                    border-color: Tokens.border;
+                    border-width: 1px;
+                    border-radius: Tokens.radius-control;
+
+                    Text {
+                        x: Tokens.space-md;
+                        width: parent.width - Tokens.space-md * 2;
+                        height: 100%;
+                        text: item;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        wrap: word-wrap;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+            }
+        }
+    }
+}

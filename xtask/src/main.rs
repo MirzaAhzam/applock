@@ -37,6 +37,7 @@ fn check_budgets() -> ExitCode {
         ("target/release/applock-service.exe", 2_621_440_u64),
         ("target/release/applock-agent.exe", 1_048_576_u64),
         ("target/release/applock-lockui.exe", 6_291_456_u64),
+        ("target/release/applock-manager.exe", 8_388_608_u64),
     ];
 
     let mut failed = false;
