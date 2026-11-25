@@ -4,8 +4,10 @@ members = [
   "crates/applock-core",
   "crates/applock-ipc",
   "crates/applock-sys",
+  "crates/applock-i18n",
   "crates/applock-service",
   "crates/applock-agent",
+  "crates/applock-lockui",
   "xtask",
 ]
 

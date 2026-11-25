@@ -1,0 +1,38 @@
+// Design tokens derived strictly from DESIGN.md
+
+export global Tokens {
+    in-out property <bool> dark-mode: false;
+    in-out property <bool> rtl: false;
+    in-out property <bool> reduced-motion: false;
+
+    // Colors (DESIGN.md section 2)
+    out property <color> bg: dark-mode ? #121413 : #F6F5F2;
+    out property <color> surface: dark-mode ? #1B1D1C : #FFFFFF;
+    out property <color> text: dark-mode ? #ECEBE6 : #16181D;
+    out property <color> text-muted: dark-mode ? #A3A8A2 : #5A5F6B;
+    out property <color> border: dark-mode ? #2E3230 : #D9D6CF;
+    out property <color> accent: dark-mode ? #4FD1B5 : #0B6B5D;
+    out property <color> on-accent: dark-mode ? #0A1A16 : #FFFFFF;
+    out property <color> danger: dark-mode ? #F2837B : #B3261E;
+    out property <color> warning: dark-mode ? #E5B04A : #8A5A00;
+
+    // Typography (DESIGN.md section 3)
+    out property <string> font-family: rtl ? "Nirmala UI" : "Segoe UI Variable";
+    out property <length> font-body: rtl ? 16px : 14px;
+    out property <length> font-caption: rtl ? 14px : 12px;
+    out property <length> font-title: rtl ? 22px : 20px;
+    out property <length> font-app-name: rtl ? 30px : 28px;
+
+    // Spacing & radii (DESIGN.md section 4)
+    out property <length> space-xs: 4px;
+    out property <length> space-sm: 8px;
+    out property <length> space-md: 16px;
+    out property <length> space-lg: 24px;
+    out property <length> radius-control: 6px;
+    out property <length> radius-dialog: 8px;
+    out property <length> min-target: 32px;
+    out property <length> focus-ring: 2px;
+
+    // Motion (DESIGN.md section 7)
+    out property <duration> anim-duration: reduced-motion ? 0ms : 120ms;
+}

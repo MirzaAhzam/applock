@@ -1,0 +1,230 @@
+import { Tokens } from "../tokens.slint";
+export { Tokens }
+
+export component LockWindow inherits Window {
+    in property <string> app-name: "App";
+    in property <string> prompt-instruction: "Enter your PIN or password to open";
+    in property <string> pin-placeholder: "PIN or password";
+    in property <string> unlock-label: "Unlock";
+    in property <string> cancel-label: "Cancel and close app";
+    in property <string> error-text: "";
+    in property <bool> is-locked-out: false;
+    in property <bool> busy: false;
+    in-out property <string> secret-input: "";
+
+    callback unlock-submitted(string);
+    callback cancelled();
+
+    title: "AppLock";
+    width: 420px;
+    height: 290px;
+    always-on-top: true;
+    background: Tokens.bg;
+    default-font-family: Tokens.font-family;
+
+    forward-focus: pin-field;
+
+    FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cancelled();
+                accept
+            }
+            reject
+        }
+
+        Rectangle {
+            x: Tokens.space-md;
+            y: Tokens.space-md;
+            width: parent.width - Tokens.space-md * 2;
+            height: parent.height - Tokens.space-md * 2;
+            background: Tokens.surface;
+            border-color: Tokens.border;
+            border-width: 1px;
+            border-radius: Tokens.radius-dialog;
+
+            VerticalLayout {
+                padding: Tokens.space-lg;
+                spacing: Tokens.space-md;
+                alignment: start;
+
+                // App identity header
+                HorizontalLayout {
+                    spacing: Tokens.space-sm;
+                    alignment: Tokens.rtl ? end : start;
+
+                    Rectangle {
+                        width: 40px;
+                        height: 40px;
+                        border-radius: Tokens.radius-control;
+                        background: Tokens.bg;
+                        border-color: Tokens.border;
+                        border-width: 1px;
+
+                        Path {
+                            width: 20px;
+                            height: 20px;
+                            x: 10px;
+                            y: 10px;
+                            fill: Tokens.accent;
+                            commands: "M 12 2 C 9.24 2 7 4.24 7 7 L 7 10 L 5 10 L 5 21 L 19 21 L 19 10 L 17 10 L 17 7 C 17 4.24 14.76 2 12 2 Z M 9 7 C 9 5.34 10.34 4 12 4 C 13.66 4 15 5.34 15 7 L 15 10 L 9 10 Z";
+                        }
+                    }
+
+                    Text {
+                        text: root.app-name;
+                        color: Tokens.text;
+                        font-size: Tokens.font-app-name;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                // Instruction line
+                Text {
+                    text: root.prompt-instruction + " " + root.app-name + ".";
+                    color: Tokens.text-muted;
+                    font-size: Tokens.font-body;
+                    wrap: word-wrap;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                // Credential input with visible focus ring and error border
+                Rectangle {
+                    height: 38px;
+                    background: Tokens.surface;
+                    border-radius: Tokens.radius-control;
+                    border-width: pin-field.has-focus || root.error-text != "" ? Tokens.focus-ring : 1px;
+                    border-color: root.error-text != "" ? Tokens.danger : (pin-field.has-focus ? Tokens.accent : Tokens.border);
+
+                    pin-field := TextInput {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: parent.height;
+                        text <=> root.secret-input;
+                        input-type: InputType.password;
+                        enabled: !root.is-locked-out && !root.busy;
+                        color: Tokens.text;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                        accessible-role: text-input;
+                        accessible-label: root.pin-placeholder;
+
+                        accepted => {
+                            if (!root.is-locked-out && !root.busy) {
+                                root.unlock-submitted(self.text);
+                            }
+                        }
+                    }
+
+                    if root.secret-input == "": Text {
+                        x: Tokens.space-sm;
+                        width: parent.width - Tokens.space-sm * 2;
+                        height: parent.height;
+                        text: root.pin-placeholder;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                // Error / lockout text (never color alone)
+                if root.error-text != "": Text {
+                    text: root.error-text;
+                    color: root.is-locked-out ? Tokens.warning : Tokens.danger;
+                    font-size: Tokens.font-caption;
+                    font-weight: 600;
+                    wrap: word-wrap;
+                    horizontal-alignment: Tokens.rtl ? right : left;
+                }
+
+                // Action buttons
+                HorizontalLayout {
+                    spacing: Tokens.space-sm;
+                    alignment: Tokens.rtl ? start : end;
+
+                    cancel-btn := Rectangle {
+                        height: 36px;
+                        min-width: 150px;
+                        border-radius: Tokens.radius-control;
+                        background: cancel-touch.pressed ? Tokens.border : (cancel-touch.has-hover ? Tokens.bg : Tokens.surface);
+                        border-color: cancel-scope.has-focus ? Tokens.accent : Tokens.border;
+                        border-width: cancel-scope.has-focus ? Tokens.focus-ring : 1px;
+                        accessible-role: button;
+                        accessible-label: root.cancel-label;
+
+                        cancel-scope := FocusScope {
+                            key-pressed(event) => {
+                                if (event.text == Key.Return || event.text == " ") {
+                                    root.cancelled();
+                                    accept
+                                }
+                                reject
+                            }
+                        }
+
+                        cancel-touch := TouchArea {
+                            clicked => { root.cancelled(); }
+                        }
+
+                        Text {
+                            text: root.cancel-label;
+                            color: Tokens.text;
+                            font-size: Tokens.font-body;
+                            font-weight: 400;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            x: Tokens.space-sm;
+                            width: parent.width - Tokens.space-sm * 2;
+                            height: parent.height;
+                        }
+                    }
+
+                    unlock-btn := Rectangle {
+                        height: 36px;
+                        min-width: 100px;
+                        border-radius: Tokens.radius-control;
+                        opacity: root.is-locked-out || root.busy ? 0.5 : 1.0;
+                        background: Tokens.accent;
+                        border-color: unlock-scope.has-focus ? Tokens.text : Tokens.accent;
+                        border-width: unlock-scope.has-focus ? Tokens.focus-ring : 1px;
+                        accessible-role: button;
+                        accessible-label: root.unlock-label;
+
+                        unlock-scope := FocusScope {
+                            enabled: !root.is-locked-out && !root.busy;
+                            key-pressed(event) => {
+                                if (event.text == Key.Return || event.text == " ") {
+                                    root.unlock-submitted(root.secret-input);
+                                    accept
+                                }
+                                reject
+                            }
+                        }
+
+                        unlock-touch := TouchArea {
+                            enabled: !root.is-locked-out && !root.busy;
+                            clicked => { root.unlock-submitted(root.secret-input); }
+                        }
+
+                        Text {
+                            text: root.unlock-label;
+                            color: Tokens.on-accent;
+                            font-size: Tokens.font-body;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                            x: Tokens.space-md;
+                            width: parent.width - Tokens.space-md * 2;
+                            height: parent.height;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
