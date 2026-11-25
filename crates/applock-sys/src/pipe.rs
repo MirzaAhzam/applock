@@ -295,7 +295,12 @@ mod tests {
 
         let resp = match client_thread.join() {
             Ok(res) => res?,
-            Err(_) => return Err(WinError { code: 1, context: "join" }),
+            Err(_) => {
+                return Err(WinError {
+                    code: 1,
+                    context: "join",
+                })
+            }
         };
         assert_eq!(resp, b"pong");
         Ok(())
