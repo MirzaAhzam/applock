@@ -1,22 +1,27 @@
-//! `AppLock` M0 proof-of-concept service (ETW launch detection, freeze, prompt, resume/kill).
+//! `AppLock` Windows service binary: ETW launch interception, named-pipe IPC, Argon2id auth, and DPAPI config.
 
 use std::collections::HashMap;
 use std::env;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use applock_core::auth::{hash_secret, verify_secret};
+use applock_core::config::{load_fail_closed, save_atomic, AppConfig};
+use applock_core::rules::{LockMode, LockedApp, RuleEngine};
+use applock_ipc::{Request, Response};
 use applock_sys::etw::EtwSession;
 use applock_sys::lock_dialog::{show_m0_lock_prompt, LockPromptOutcome};
+use applock_sys::pipe::{PipeServer, PIPE_NAME};
 use applock_sys::process::{
     current_cpu_time_100ns, current_private_memory_bytes, hide_process_windows,
     launch_hidden_command, resume_process, show_process_windows, suspend_process,
     terminate_process, wait_process_exit,
 };
 
-const M0_TEST_PIN: &str = "1234";
+const DEFAULT_PIN: &str = "1234";
 const DEFAULT_WATCH_APPS: &[&str] = &[
     "notepad.exe",
     "calculatorapp.exe",
@@ -25,12 +30,228 @@ const DEFAULT_WATCH_APPS: &[&str] = &[
     "firefox.exe",
 ];
 
+struct ServiceState {
+    config_path: PathBuf,
+    config: AppConfig,
+    rules: RuleEngine,
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     if args.iter().any(|a| a == "--bench-m0") {
         return run_bench_m0();
     }
-    run_interactive_m0(&args)
+    run_service(&args)
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn default_config_path() -> PathBuf {
+    if let Ok(program_data) = env::var("ProgramData") {
+        return PathBuf::from(program_data)
+            .join("AppLock")
+            .join("config.bin");
+    }
+    PathBuf::from("config.bin")
+}
+
+fn load_or_init_config(path: &Path, apps_override: &[String]) -> AppConfig {
+    if let Ok(cfg) = load_fail_closed(path) {
+        return cfg;
+    }
+    let pin_hash = hash_secret(DEFAULT_PIN.as_bytes()).ok();
+    let app_list: Vec<String> = if apps_override.is_empty() {
+        DEFAULT_WATCH_APPS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect()
+    } else {
+        apps_override.to_vec()
+    };
+    let locked_apps = app_list
+        .into_iter()
+        .map(|app_id| LockedApp {
+            app_id,
+            mode: LockMode::Always,
+        })
+        .collect();
+    let cfg = AppConfig {
+        pin_hash,
+        locked_apps,
+        ..AppConfig::default()
+    };
+    let _ = save_atomic(path, &cfg);
+    cfg
+}
+
+fn verify_and_update(
+    state: &Arc<Mutex<ServiceState>>,
+    attempt: &[u8],
+    app_id: Option<&str>,
+) -> (bool, u64) {
+    let now = now_unix_secs();
+    let Ok(mut guard) = state.lock() else {
+        return (false, 30);
+    };
+    let rem = guard.config.lockout.remaining_secs(now);
+    if rem > 0 {
+        return (false, rem);
+    }
+
+    let ok_pw = guard
+        .config
+        .password_hash
+        .as_deref()
+        .is_some_and(|h| verify_secret(h, attempt));
+    let ok_pin = guard
+        .config
+        .pin_hash
+        .as_deref()
+        .is_some_and(|h| verify_secret(h, attempt));
+
+    if ok_pw || ok_pin {
+        guard.config.lockout.record_success();
+        if let Some(id) = app_id {
+            guard.rules.record_unlock(id, now);
+        }
+        let cfg_clone = guard.config.clone();
+        let path_clone = guard.config_path.clone();
+        let _ = save_atomic(&path_clone, &cfg_clone);
+        (true, 0)
+    } else {
+        guard.config.lockout.record_failure(now);
+        let new_rem = guard.config.lockout.remaining_secs(now);
+        let cfg_clone = guard.config.clone();
+        let path_clone = guard.config_path.clone();
+        let _ = save_atomic(&path_clone, &cfg_clone);
+        (false, new_rem)
+    }
+}
+
+fn spawn_pipe_server(state: Arc<Mutex<ServiceState>>) {
+    thread::spawn(move || {
+        let Ok(server) = PipeServer::create(PIPE_NAME) else {
+            eprintln!("Warning: could not bind named pipe {PIPE_NAME}");
+            return;
+        };
+        loop {
+            if server.accept().is_err() {
+                continue;
+            }
+            if let Ok(frame) = server.read_frame() {
+                let resp = handle_ipc_frame(&state, &frame);
+                if let Ok(bytes) = resp.encode() {
+                    let _ = server.write_frame(&bytes);
+                }
+            }
+            server.disconnect();
+        }
+    });
+}
+
+fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response {
+    match Request::decode(frame) {
+        Ok(Request::Ping { nonce }) => Response::Pong { nonce },
+        Ok(Request::QueryAppLocked { nonce, app_id }) => {
+            let locked = state
+                .lock()
+                .map_or(true, |g| g.rules.should_lock(&app_id, now_unix_secs()));
+            Response::AppLockStatus { nonce, locked }
+        }
+        Ok(Request::VerifyCredential {
+            nonce,
+            target_pid,
+            secret,
+        }) => {
+            let (allowed, lockout_remaining_secs) = verify_and_update(state, &secret, None);
+            if allowed && target_pid != 0 {
+                let _ = resume_process(target_pid);
+            }
+            Response::CredentialResult {
+                nonce,
+                allowed,
+                lockout_remaining_secs,
+            }
+        }
+        Err(_) => Response::Error {
+            nonce: [0_u8; 16],
+            code: 400,
+        },
+    }
+}
+
+fn run_service(args: &[String]) -> ExitCode {
+    let config_path = default_config_path();
+    let apps_override: Vec<String> = args.iter().map(|s| s.to_ascii_lowercase()).collect();
+    let config = load_or_init_config(&config_path, &apps_override);
+    let rules = RuleEngine::from_apps(&config.locked_apps);
+
+    println!("AppLock Service running (ETW + DPAPI config + Argon2id + Named Pipe).");
+    println!("Config: {}", config_path.display());
+    println!("Default M0 PIN (if new config): {DEFAULT_PIN}");
+
+    let state = Arc::new(Mutex::new(ServiceState {
+        config_path,
+        config,
+        rules,
+    }));
+
+    spawn_pipe_server(Arc::clone(&state));
+
+    let (tx, rx) = std::sync::mpsc::channel::<(u32, String)>();
+    let state_etw = Arc::clone(&state);
+
+    let _session = match EtwSession::start(move |pid, path| {
+        let exe_name = Path::new(path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if exe_name.is_empty() {
+            return;
+        }
+        let should_lock = state_etw
+            .lock()
+            .map_or(true, |g| g.rules.should_lock(&exe_name, now_unix_secs()));
+        if should_lock && suspend_process(pid).is_ok() {
+            let _ = tx.send((pid, exe_name));
+        }
+    }) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Failed to start ETW session (run as Administrator): {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    for (pid, exe_name) in rx {
+        let hidden = hide_process_windows(pid);
+        println!("Frozen {exe_name} (pid {pid}); verifying via Argon2id...");
+        let outcome = show_m0_lock_prompt(&exe_name);
+        match outcome {
+            LockPromptOutcome::Attempt(pin) => {
+                let (allowed, rem) = verify_and_update(&state, pin.as_bytes(), Some(&exe_name));
+                if allowed {
+                    println!("Unlocked {exe_name} (pid {pid})");
+                    let _ = resume_process(pid);
+                    show_process_windows(&hidden);
+                } else {
+                    println!("Rejected (lockout {rem}s) -> terminating {exe_name} (pid {pid})");
+                    let _ = terminate_process(pid);
+                }
+            }
+            LockPromptOutcome::Cancelled => {
+                println!("Cancelled -> terminating {exe_name} (pid {pid})");
+                let _ = terminate_process(pid);
+            }
+        }
+    }
+
+    ExitCode::SUCCESS
 }
 
 fn run_bench_m0() -> ExitCode {
@@ -61,7 +282,6 @@ fn run_bench_m0() -> ExitCode {
         }
     };
 
-    // Warm up ETW delivery briefly before timed runs.
     thread::sleep(Duration::from_millis(200));
 
     let total_runs = 60_usize;
@@ -83,7 +303,6 @@ fn run_bench_m0() -> ExitCode {
 
     thread::sleep(Duration::from_millis(150));
 
-    // Measure idle RAM and idle CPU% over 1 second with ETW session open and no launches.
     let ram_bytes = current_private_memory_bytes().unwrap_or(0);
     let cpu_before = current_cpu_time_100ns().unwrap_or(0);
     let wall_before = Instant::now();
@@ -130,65 +349,4 @@ fn percentile(sorted: &[u64], pct: usize) -> u64 {
     }
     let idx = (sorted.len().saturating_sub(1) * pct) / 100;
     sorted.get(idx).copied().unwrap_or(0)
-}
-
-fn run_interactive_m0(args: &[String]) -> ExitCode {
-    let watch_list: Vec<String> = if args.is_empty() {
-        DEFAULT_WATCH_APPS
-            .iter()
-            .map(|s| (*s).to_string())
-            .collect()
-    } else {
-        args.iter().map(|s| s.to_ascii_lowercase()).collect()
-    };
-
-    println!("AppLock M0 Service Spike running (Administrator required for ETW).");
-    println!("Watching launches for: {}", watch_list.join(", "));
-    println!("Test PIN: {M0_TEST_PIN} | Press Ctrl+C in this window to stop.");
-
-    let (tx, rx) = std::sync::mpsc::channel::<(u32, String)>();
-    let watch_clone = watch_list;
-
-    let _session = match EtwSession::start(move |pid, path| {
-        let exe_name = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        if !exe_name.is_empty()
-            && watch_clone.iter().any(|w| w == &exe_name)
-            && suspend_process(pid).is_ok()
-        {
-            let _ = tx.send((pid, exe_name));
-        }
-    }) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to start ETW session (run as Administrator): {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-
-    for (pid, exe_name) in rx {
-        let hidden = hide_process_windows(pid);
-        println!("Frozen {exe_name} (pid {pid}); showing lock prompt...");
-        let outcome = show_m0_lock_prompt(&exe_name);
-        match outcome {
-            LockPromptOutcome::Attempt(pin) if pin == M0_TEST_PIN => {
-                println!("Correct PIN -> resuming {exe_name} (pid {pid})");
-                let _ = resume_process(pid);
-                show_process_windows(&hidden);
-            }
-            LockPromptOutcome::Attempt(_) => {
-                println!("Wrong PIN -> terminating {exe_name} (pid {pid})");
-                let _ = terminate_process(pid);
-            }
-            LockPromptOutcome::Cancelled => {
-                println!("Cancelled -> terminating {exe_name} (pid {pid})");
-                let _ = terminate_process(pid);
-            }
-        }
-    }
-
-    ExitCode::SUCCESS
 }
