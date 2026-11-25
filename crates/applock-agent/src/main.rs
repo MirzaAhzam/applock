@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use applock_ipc::{Request, Response};
 use applock_sys::crypto::fill_random;
-use applock_sys::pipe::{PIPE_NAME, PipeClient};
+use applock_sys::pipe::{PipeClient, PIPE_NAME};
 use applock_sys::process::{current_cpu_time_100ns, current_private_memory_bytes};
 use applock_sys::winevent::run_foreground_watcher;
 

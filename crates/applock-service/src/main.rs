@@ -9,12 +9,12 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use applock_core::auth::{hash_secret, verify_secret};
-use applock_core::config::{AppConfig, load_fail_closed, save_atomic};
+use applock_core::config::{load_fail_closed, save_atomic, AppConfig};
 use applock_core::rules::{LockMode, LockedApp, RuleEngine};
 use applock_ipc::{Request, Response};
 use applock_sys::etw::EtwSession;
-use applock_sys::lock_dialog::{LockPromptOutcome, show_m0_lock_prompt};
-use applock_sys::pipe::{PIPE_NAME, PipeServer};
+use applock_sys::lock_dialog::{show_m0_lock_prompt, LockPromptOutcome};
+use applock_sys::pipe::{PipeServer, PIPE_NAME};
 use applock_sys::process::{
     current_cpu_time_100ns, current_private_memory_bytes, hide_process_windows,
     launch_hidden_command, resume_process, show_process_windows, suspend_process,
@@ -88,7 +88,11 @@ fn load_or_init_config(path: &Path, apps_override: &[String]) -> AppConfig {
     cfg
 }
 
-fn verify_and_update(state: &Arc<Mutex<ServiceState>>, attempt: &[u8], app_id: Option<&str>) -> (bool, u64) {
+fn verify_and_update(
+    state: &Arc<Mutex<ServiceState>>,
+    attempt: &[u8],
+    app_id: Option<&str>,
+) -> (bool, u64) {
     let now = now_unix_secs();
     let Ok(mut guard) = state.lock() else {
         return (false, 30);
@@ -153,9 +157,9 @@ fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response 
     match Request::decode(frame) {
         Ok(Request::Ping { nonce }) => Response::Pong { nonce },
         Ok(Request::QueryAppLocked { nonce, app_id }) => {
-            let locked = state.lock().map_or(true, |g| {
-                g.rules.should_lock(&app_id, now_unix_secs())
-            });
+            let locked = state
+                .lock()
+                .map_or(true, |g| g.rules.should_lock(&app_id, now_unix_secs()));
             Response::AppLockStatus { nonce, locked }
         }
         Ok(Request::VerifyCredential {
