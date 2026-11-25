@@ -80,7 +80,10 @@ fn main() -> ExitCode {
         let hidden = hide_process_windows(pid);
 
         let active_clone = Arc::clone(&active_pids);
-        let display_name = exe_name.strip_suffix(".exe").unwrap_or(exe_name).to_string();
+        let display_name = exe_name
+            .strip_suffix(".exe")
+            .unwrap_or(exe_name)
+            .to_string();
 
         let spawned = thread::Builder::new()
             .name("applock-prompt".to_string())
