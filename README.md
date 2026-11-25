@@ -2,10 +2,47 @@
 
 [![CI](https://github.com/MirzaAhzam/applock/actions/workflows/ci.yml/badge.svg)](https://github.com/MirzaAhzam/applock/actions/workflows/ci.yml)
 [![Security](https://github.com/MirzaAhzam/applock/actions/workflows/security.yml/badge.svg)](https://github.com/MirzaAhzam/applock/actions/workflows/security.yml)
+[![Release](https://img.shields.io/github/v/release/MirzaAhzam/applock?label=download)](https://github.com/MirzaAhzam/applock/releases/latest)
 
-AppLock for Windows is a lightweight Rust application that locks individual Windows 10 and Windows 11 apps (classic Win32 and Microsoft Store/UWP) behind a password, PIN, or Windows Hello.
+Lock individual Windows apps behind a PIN or password. Lightweight, event-driven, no background polling.
 
-> **Status:** M1 foundation and M0 technical spike complete. M2 (MVP UI, Argon2id auth, named-pipe IPC, and installer) is in progress.
+---
+
+## Download
+
+**[→ Download AppLock v0.1.0 (Windows x64 installer)](https://github.com/MirzaAhzam/applock/releases/latest/download/applock-0.1.0-x64-setup.exe)**
+
+Or browse all releases and release notes: [github.com/MirzaAhzam/applock/releases](https://github.com/MirzaAhzam/applock/releases)
+
+> **Default test PIN:** `1234` — change it immediately after first install in the Manager app.
+
+### Available packages
+
+| File | Description |
+|---|---|
+| `applock-0.1.0-x64-setup.exe` | Full installer — installs service, agent, Manager, and lock UI |
+| `applock-0.1.0-x64-portable.zip` | Portable — no install needed; run from any folder |
+| `SHA256SUMS-x64.txt` | File checksums — verify before running |
+
+### Installation steps (installer)
+
+1. Download `applock-0.1.0-x64-setup.exe`
+2. Right-click → **Run as administrator**
+3. Follow the installer. It registers `applock-service` as a Windows service under `LocalSystem`.
+4. Open **AppLock Manager** from the Start menu, enter PIN `1234`, then change it.
+5. Add the apps you want to lock from the **Apps** tab.
+
+---
+
+## Honest Security Limits
+
+AppLock protects against casual and standard-user access on an unlocked Windows session. It **cannot** stop:
+
+- An account with **Administrator** rights on the same machine
+- **Safe Mode** boot (services do not start)
+- **Offline disk access** — anyone with physical access to your drive can read files directly
+
+For those threats: use a **standard (non-admin) daily account**, enable **BitLocker**, and set a **BIOS password**. Full details are in [PRD.md](PRD.md) section 9.
 
 ---
 
@@ -18,10 +55,10 @@ flowchart LR
     S -->|NtSuspendProcess| T["Target App (Frozen)"]
     S -->|Lock Request| L["applock-lockui (On Demand)"]
     L -->|Credential Attempt| S
-    S -->|Valid: NtResumeProcess / Cancel: TerminateProcess| T
+    S -->|"Valid: NtResumeProcess / Cancel: TerminateProcess"| T
 ```
 
-- **Privilege separation:** Only `applock-service` runs as `SYSTEM` and decides allow/deny. UI processes never receive password hashes or full rule tables.
+- **Privilege separation:** Only `applock-service` runs as `SYSTEM` and decides allow/deny. UI processes never receive password hashes or the full rule table.
 - **Event-driven:** Uses ETW (`Microsoft-Windows-Kernel-Process`) and `SetWinEventHook` (`EVENT_SYSTEM_FOREGROUND`) with zero polling loops and no async runtime in the service or agent.
 - **Fail closed:** Errors, crashes, or closing the lock prompt keep the protected app blocked.
 
@@ -37,18 +74,20 @@ UI design follows [DESIGN.md](DESIGN.md):
 
 ---
 
-## Measured M0 Performance
+## Measured Performance
 
-Measured on GitHub Actions (`windows-2025`, `10.0.26100` x64) in [docs/decisions/0001-m0-spike-results.md](docs/decisions/0001-m0-spike-results.md):
+Measured on GitHub Actions (`windows-2025`, `10.0.26100` x64):
 
-| Metric | Target (`PRD.md` 7.1) | Measured (M0) |
+| Metric | Limit (`PRD.md` 7.1) | Measured |
 |---|---|---|
-| `applock-service` idle RAM | <= 8.00 MiB | 1.74 MiB |
-| `applock-agent` idle RAM | <= 3.00 MiB | 0.98 MiB |
+| `applock-service` idle RAM | ≤ 8.00 MiB | 1.74 MiB |
+| `applock-agent` idle RAM | ≤ 3.00 MiB | 0.98 MiB |
 | Idle CPU (service + agent) | ~0% | 0.000% |
-| `applock-service.exe` size | <= 2.50 MiB | 217,088 bytes (0.21 MiB) |
-| `applock-agent.exe` size | <= 1.00 MiB | 184,320 bytes (0.18 MiB) |
-| Detect-to-frozen (p95, 60 runs) | <= 50 ms | 1038.89 ms (user-mode ETW batching) |
+| `applock-service.exe` size | ≤ 2.50 MiB | 0.30 MiB |
+| `applock-agent.exe` size | ≤ 1.00 MiB | 0.28 MiB |
+| `applock-lockui.exe` size | ≤ 6.00 MiB | 2.00 MiB |
+| `applock-manager.exe` size | ≤ 8.00 MiB | 2.27 MiB |
+| Installer size | ≤ 10.0 MiB | ~3.0 MiB |
 
 ---
 
@@ -61,13 +100,9 @@ Measured on GitHub Actions (`windows-2025`, `10.0.26100` x64) in [docs/decisions
 | `crates/applock-sys` | Thin Windows API wrappers (ETW, suspend/resume, WinEventHook) | Allowed (only here) |
 | `crates/applock-service` | Background Windows service binary | Forbidden |
 | `crates/applock-agent` | Hidden user-session foreground watcher | Forbidden |
+| `crates/applock-lockui` | Lock screen UI (Slint, software renderer) | Forbidden |
+| `crates/applock-manager` | Manager UI (Slint, PIN gate, Apps/Security/Limits tabs) | Forbidden |
 | `xtask` | CI budget checks and packaging helpers | Forbidden |
-
----
-
-## Honest Security Limits
-
-AppLock protects against casual and standard-user access on an unlocked Windows session. User-mode software cannot stop an attacker with an **Administrator** account, **Safe Mode**, or **offline disk access** (use a standard daily account plus BitLocker and a BIOS password for those). Full details are in [PRD.md](PRD.md) section 9.
 
 ---
 
