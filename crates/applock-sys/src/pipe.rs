@@ -294,7 +294,7 @@ mod tests {
         server.disconnect();
 
         let resp = match client_thread.join() {
-            Ok(res) => res?,
+            Ok(client_out) => client_out?,
             Err(_) => {
                 return Err(WinError {
                     code: 1,
