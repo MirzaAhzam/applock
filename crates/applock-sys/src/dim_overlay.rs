@@ -38,7 +38,7 @@ impl DimOverlay {
         let (tx, rx) = mpsc::sync_channel::<isize>(1);
         let handle = thread::Builder::new()
             .name("applock-dim-overlay".to_string())
-            .spawn(move || run_overlay_thread(tx))
+            .spawn(move || run_overlay_thread(&tx))
             .ok()?;
 
         match rx.recv() {
@@ -69,7 +69,7 @@ impl Drop for DimOverlay {
     }
 }
 
-fn run_overlay_thread(tx: mpsc::SyncSender<isize>) {
+fn run_overlay_thread(tx: &mpsc::SyncSender<isize>) {
     let class_name = to_wide_null("AppLockDimOverlay");
     let title = to_wide_null("AppLock Overlay");
 
