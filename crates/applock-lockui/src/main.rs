@@ -15,7 +15,15 @@ use applock_ipc::{Request, Response};
 use applock_sys::crypto::fill_random;
 use applock_sys::pipe::{PipeClient, PIPE_NAME};
 
-#[allow(clippy::all, clippy::pedantic, missing_docs)]
+#[allow(
+    clippy::all,
+    clippy::pedantic,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::todo,
+    missing_docs
+)]
 mod slint_generated {
     slint::include_modules!();
 }
