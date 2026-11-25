@@ -1,3 +1,5 @@
+//! Software-rendered Slint lock screen UI for `AppLock`.
+
 #![forbid(unsafe_code)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
