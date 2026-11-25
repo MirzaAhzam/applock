@@ -3,7 +3,8 @@
 use std::mem::{size_of, zeroed};
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, FILETIME, HANDLE, NTSTATUS};
+use windows_sys::core::BOOL;
+use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, FILETIME, HANDLE, HWND, LPARAM, NTSTATUS};
 use windows_sys::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
 };
@@ -11,6 +12,9 @@ use windows_sys::Win32::System::Threading::{
     CreateProcessW, GetCurrentProcess, GetProcessTimes, OpenProcess, QueryFullProcessImageNameW,
     TerminateProcess, WaitForSingleObject, CREATE_NO_WINDOW, PROCESS_INFORMATION,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, STARTUPINFOW,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowThreadProcessId, IsWindowVisible, ShowWindowAsync, SW_HIDE, SW_SHOW,
 };
 
 use crate::{to_wide_null, WinError};
@@ -224,6 +228,46 @@ pub fn wait_process_exit(pid: u32, timeout_ms: u32) {
             CloseHandle(handle);
         }
     }
+}
+
+struct HideSearch {
+    target_pid: u32,
+    hidden: Vec<isize>,
+}
+
+/// Asynchronously hides any visible top-level windows owned by `pid` and returns their handles.
+#[must_use]
+pub fn hide_process_windows(pid: u32) -> Vec<isize> {
+    let mut search = HideSearch {
+        target_pid: pid,
+        hidden: Vec::new(),
+    };
+    // SAFETY: `search` lives on the stack for the synchronous `EnumWindows` call.
+    unsafe {
+        let _ = EnumWindows(Some(hide_enum_proc), (&raw mut search) as LPARAM);
+    }
+    search.hidden
+}
+
+/// Restores windows previously hidden by [`hide_process_windows`].
+pub fn show_process_windows(hwnds: &[isize]) {
+    // SAFETY: Each `isize` was captured from a valid `HWND` during `EnumWindows`.
+    unsafe {
+        for &raw in hwnds {
+            let _ = ShowWindowAsync(raw as HWND, SW_SHOW);
+        }
+    }
+}
+
+unsafe extern "system" fn hide_enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let search = &mut *(lparam as *mut HideSearch);
+    let mut win_pid: u32 = 0;
+    GetWindowThreadProcessId(hwnd, &raw mut win_pid);
+    if win_pid == search.target_pid && IsWindowVisible(hwnd) != 0 {
+        let _ = ShowWindowAsync(hwnd, SW_HIDE);
+        search.hidden.push(hwnd as isize);
+    }
+    1
 }
 
 #[cfg(test)]

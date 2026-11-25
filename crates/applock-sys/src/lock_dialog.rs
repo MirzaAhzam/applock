@@ -1,19 +1,24 @@
-//! Minimal native Win32 lock prompt used only for the M0 proof-of-concept spike.
+//! Minimal native Win32 lock prompt with 55% black full-screen dim overlay for M0/M2.
 
 use std::mem::zeroed;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
-use windows_sys::Win32::Graphics::Gdi::{GetStockObject, COLOR_WINDOW, DEFAULT_GUI_FONT};
+use windows_sys::Win32::Graphics::Gdi::{
+    GetStockObject, BLACK_BRUSH, COLOR_WINDOW, DEFAULT_GUI_FONT,
+};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW,
-    GetWindowLongPtrW, GetWindowTextW, IsDialogMessageW, PostQuitMessage, RegisterClassW,
-    SendMessageW, SetForegroundWindow, SetWindowLongPtrW, ShowWindow, TranslateMessage,
-    BS_DEFPUSHBUTTON, BS_PUSHBUTTON, CREATESTRUCTW, ES_PASSWORD, GWLP_USERDATA, IDOK, MSG, SW_SHOW,
-    WM_COMMAND, WM_CREATE, WM_DESTROY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_EX_TOPMOST, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    GetSystemMetrics, GetWindowLongPtrW, GetWindowTextW, IsDialogMessageW, PostQuitMessage,
+    RegisterClassW, SendMessageW, SetForegroundWindow, SetLayeredWindowAttributes,
+    SetWindowLongPtrW, ShowWindow, TranslateMessage, BS_DEFPUSHBUTTON, BS_PUSHBUTTON,
+    CREATESTRUCTW, ES_PASSWORD, GWLP_USERDATA, IDOK, LWA_ALPHA, MSG, SM_CXSCREEN,
+    SM_CXVIRTUALSCREEN, SM_CYSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
+    SW_SHOW, WM_COMMAND, WM_CREATE, WM_DESTROY, WM_SETFONT, WNDCLASSW, WS_BORDER, WS_CAPTION,
+    WS_CHILD, WS_DISABLED, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_SYSMENU,
+    WS_TABSTOP, WS_VISIBLE,
 };
 
 use crate::to_wide_null;
@@ -21,6 +26,9 @@ use crate::to_wide_null;
 const ID_EDIT: i32 = 101;
 const ID_UNLOCK: i32 = 102;
 const ID_CANCEL: i32 = 103;
+const DIM_ALPHA_55_PCT: u8 = 140;
+const PROMPT_W: i32 = 400;
+const PROMPT_H: i32 = 190;
 
 /// Result of the minimal M0 lock prompt.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,7 +44,7 @@ struct PromptState {
     outcome: LockPromptOutcome,
 }
 
-/// Shows a minimal topmost Win32 lock window for `app_name` and blocks until submitted or cancelled.
+/// Shows a 55% black full-screen dim overlay and a centered topmost lock prompt for `app_name`.
 #[must_use]
 pub fn show_m0_lock_prompt(app_name: &str) -> LockPromptOutcome {
     let class_name = to_wide_null("AppLockM0Prompt");
@@ -49,9 +57,11 @@ pub fn show_m0_lock_prompt(app_name: &str) -> LockPromptOutcome {
     };
 
     // SAFETY: Standard Win32 window registration and modal message loop on the calling thread;
-    // `state` outlives `DestroyWindow` and `GWLP_USERDATA` is only read while `state` is alive.
+    // `state` outlives `DestroyWindow` and `dim_hwnd` is destroyed before returning.
     unsafe {
         let hinstance = GetModuleHandleW(ptr::null());
+        let dim_hwnd = create_dim_overlay(hinstance);
+
         let wc = WNDCLASSW {
             style: 0,
             lpfnWndProc: Some(prompt_wnd_proc),
@@ -66,21 +76,26 @@ pub fn show_m0_lock_prompt(app_name: &str) -> LockPromptOutcome {
         };
         RegisterClassW(&raw const wc);
 
+        let x = (GetSystemMetrics(SM_CXSCREEN) - PROMPT_W) / 2;
+        let y = (GetSystemMetrics(SM_CYSCREEN) - PROMPT_H) / 2;
         let hwnd = CreateWindowExW(
             WS_EX_TOPMOST,
             class_name.as_ptr(),
             title.as_ptr(),
             WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
-            300,
-            240,
-            400,
-            190,
-            ptr::null_mut(),
+            x.max(0),
+            y.max(0),
+            PROMPT_W,
+            PROMPT_H,
+            dim_hwnd,
             ptr::null_mut(),
             hinstance,
             (&raw mut state).cast(),
         );
         if hwnd.is_null() {
+            if !dim_hwnd.is_null() {
+                DestroyWindow(dim_hwnd);
+            }
             return LockPromptOutcome::Cancelled;
         }
 
@@ -97,9 +112,55 @@ pub fn show_m0_lock_prompt(app_name: &str) -> LockPromptOutcome {
                 DispatchMessageW(&raw const msg);
             }
         }
+
+        if !dim_hwnd.is_null() {
+            DestroyWindow(dim_hwnd);
+        }
     }
 
     state.outcome
+}
+
+unsafe fn create_dim_overlay(hinstance: HINSTANCE) -> HWND {
+    let dim_class = to_wide_null("AppLockM0Dim");
+    let wc = WNDCLASSW {
+        style: 0,
+        lpfnWndProc: Some(DefWindowProcW),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: hinstance,
+        hIcon: ptr::null_mut(),
+        hCursor: ptr::null_mut(),
+        hbrBackground: GetStockObject(BLACK_BRUSH),
+        lpszMenuName: ptr::null(),
+        lpszClassName: dim_class.as_ptr(),
+    };
+    RegisterClassW(&raw const wc);
+
+    let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN).max(1920);
+    let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN).max(1080);
+
+    let dim_hwnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        dim_class.as_ptr(),
+        ptr::null(),
+        WS_POPUP | WS_DISABLED | WS_VISIBLE,
+        vx,
+        vy,
+        vw,
+        vh,
+        ptr::null_mut(),
+        ptr::null_mut(),
+        hinstance,
+        ptr::null(),
+    );
+    if !dim_hwnd.is_null() {
+        let _ = SetLayeredWindowAttributes(dim_hwnd, 0, DIM_ALPHA_55_PCT, LWA_ALPHA);
+        ShowWindow(dim_hwnd, SW_SHOW);
+    }
+    dim_hwnd
 }
 
 unsafe fn create_prompt_children(hwnd: HWND, hinstance: HINSTANCE, label_text: &[u16]) -> HWND {

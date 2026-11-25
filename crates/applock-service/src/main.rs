@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use applock_sys::etw::EtwSession;
 use applock_sys::lock_dialog::{show_m0_lock_prompt, LockPromptOutcome};
 use applock_sys::process::{
-    current_cpu_time_100ns, current_private_memory_bytes, launch_hidden_command, resume_process,
-    suspend_process, terminate_process, wait_process_exit,
+    current_cpu_time_100ns, current_private_memory_bytes, hide_process_windows,
+    launch_hidden_command, resume_process, show_process_windows, suspend_process,
+    terminate_process, wait_process_exit,
 };
 
 const M0_TEST_PIN: &str = "1234";
@@ -169,12 +170,14 @@ fn run_interactive_m0(args: &[String]) -> ExitCode {
     };
 
     for (pid, exe_name) in rx {
+        let hidden = hide_process_windows(pid);
         println!("Frozen {exe_name} (pid {pid}); showing lock prompt...");
         let outcome = show_m0_lock_prompt(&exe_name);
         match outcome {
             LockPromptOutcome::Attempt(pin) if pin == M0_TEST_PIN => {
                 println!("Correct PIN -> resuming {exe_name} (pid {pid})");
                 let _ = resume_process(pid);
+                show_process_windows(&hidden);
             }
             LockPromptOutcome::Attempt(_) => {
                 println!("Wrong PIN -> terminating {exe_name} (pid {pid})");
