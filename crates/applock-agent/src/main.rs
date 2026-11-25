@@ -51,7 +51,7 @@ fn main() -> ExitCode {
     let active_pids: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(HashSet::new()));
     let self_pid = std::process::id();
 
-    if let Err(e) = run_foreground_watcher(|pid, path| {
+    if let Err(e) = run_foreground_watcher(move |pid, path| {
         if pid == 0 || pid == self_pid {
             return;
         }
