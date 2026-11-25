@@ -3,6 +3,7 @@
 //! All `unsafe` code in the workspace (outside v2 shell extensions) lives in this crate.
 
 pub mod crypto;
+pub mod dim_overlay;
 pub mod etw;
 pub mod lock_dialog;
 pub mod pipe;
