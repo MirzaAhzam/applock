@@ -1,7 +1,30 @@
-//! Core `AppLock` rules, configuration types, and security state machines.
+//! Core `AppLock` rules, configuration persistence, authentication, and lockout logic.
+
+pub mod auth;
+pub mod config;
+pub mod lockout;
+pub mod rules;
 
 use applock_ipc::PROTOCOL_VERSION;
-use applock_sys::current_process_id;
+use applock_sys::{current_process_id, WinError};
+use thiserror::Error;
+
+/// Errors returned by `applock-core` operations.
+#[derive(Debug, Error)]
+pub enum CoreError {
+    /// Underlying Windows API failure.
+    #[error("system operation failed: {0}")]
+    Sys(#[from] WinError),
+    /// Password or PIN hashing failed.
+    #[error("credential hashing failed")]
+    Crypto,
+    /// Configuration file is missing, corrupt, or has an unsupported version.
+    #[error("configuration is invalid or corrupt")]
+    CorruptConfig,
+    /// Filesystem I/O failure.
+    #[error("storage I/O failed")]
+    Io(#[from] std::io::Error),
+}
 
 /// Returns a basic runtime identity summary for diagnostics.
 #[must_use]

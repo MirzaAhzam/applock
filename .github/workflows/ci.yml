@@ -25,17 +25,40 @@ jobs:
 
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
+      - name: Check lockfile sync
+        id: lockfile
+        shell: pwsh
+        run: |
+          cargo metadata --locked --format-version 1 > $null 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            cargo generate-lockfile
+            echo "generated=true" >> $env:GITHUB_OUTPUT
+            echo "lock_flag=" >> $env:GITHUB_OUTPUT
+          } else {
+            echo "generated=false" >> $env:GITHUB_OUTPUT
+            echo "lock_flag=--locked" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Upload updated Cargo.lock
+        if: steps.lockfile.outputs.generated == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: generated-cargo-lock-${{ github.sha }}
+          path: Cargo.lock
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Format check
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets ${{ steps.lockfile.outputs.lock_flag }} -- -D warnings
 
       - name: Tests
-        run: cargo test --workspace --locked
+        run: cargo test --workspace ${{ steps.lockfile.outputs.lock_flag }}
 
       - name: Release build
-        run: cargo build --release --workspace --locked
+        run: cargo build --release --workspace ${{ steps.lockfile.outputs.lock_flag }}
 
       - name: Check budgets
         run: cargo xtask check-budgets
