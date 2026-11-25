@@ -109,4 +109,3 @@ mod tests {
         assert!(engine.should_lock("msedge.exe", 1350));
     }
 }
-
