@@ -56,11 +56,8 @@ impl LockStrings {
             Language::Ur => UR_TOML,
         };
         let map = parse_simple_toml(raw);
-        let get = |k: &str, fallback: &str| {
-            map.get(k)
-                .cloned()
-                .unwrap_or_else(|| fallback.to_string())
-        };
+        let get =
+            |k: &str, fallback: &str| map.get(k).cloned().unwrap_or_else(|| fallback.to_string());
         Self {
             lock_title: get("lock_title", "AppLock"),
             prompt_instruction: get("prompt_instruction", "Enter your PIN or password to open"),
