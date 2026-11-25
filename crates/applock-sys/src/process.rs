@@ -4,7 +4,9 @@ use std::mem::{size_of, zeroed};
 use std::ptr;
 
 use windows_sys::core::BOOL;
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, FILETIME, HANDLE, HWND, LPARAM, NTSTATUS};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, GetLastError, FILETIME, HANDLE, HWND, LPARAM, NTSTATUS,
+};
 use windows_sys::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
 };
