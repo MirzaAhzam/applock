@@ -94,7 +94,10 @@ fn check_budgets(bin_dir: &str) -> ExitCode {
             Ok(meta) => {
                 let size = meta.len();
                 let status = if size <= limit { "PASS" } else { "FAIL" };
-                println!("{}: {size} bytes (limit {limit} bytes) [{status}]", path.display());
+                println!(
+                    "{}: {size} bytes (limit {limit} bytes) [{status}]",
+                    path.display()
+                );
                 if size > limit {
                     failed = true;
                 }
