@@ -1,6 +1,9 @@
 //! Software-rendered Slint lock screen UI for `AppLock`.
 
-#![forbid(unsafe_code)]
+// Slint's generated `ItemTreeVTable_static!` macro emits `#[allow(unsafe_code)]`,
+// which triggers E0453 under `#![forbid(unsafe_code)]`. All hand-written code
+// in this crate contains zero `unsafe`.
+#![deny(unsafe_code)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::cell::Cell;
@@ -8,7 +11,7 @@ use std::process::ExitCode;
 use std::rc::Rc;
 
 use applock_i18n::{Language, LockStrings};
-use applock_ipc::{Request, Response, MAX_MESSAGE_BYTES};
+use applock_ipc::{Request, Response};
 use applock_sys::crypto::fill_random;
 use applock_sys::pipe::{PipeClient, PIPE_NAME};
 
@@ -88,19 +91,22 @@ fn verify_with_service(target_pid: u32, secret: &str) -> VerifyOutcome {
     let req = Request::VerifyCredential {
         nonce,
         target_pid,
-        secret: secret.to_string(),
+        secret: secret.as_bytes().to_vec(),
     };
-    let Ok(bytes) = req.to_bytes() else {
+    let Ok(bytes) = req.encode() else {
         return VerifyOutcome::ServiceUnavailable;
     };
 
-    let Ok(mut client) = PipeClient::connect(PIPE_NAME, 1000) else {
+    let Ok(client) = PipeClient::connect(PIPE_NAME, 1000) else {
         return VerifyOutcome::ServiceUnavailable;
     };
-    let Ok(resp_bytes) = client.round_trip(&bytes, MAX_MESSAGE_BYTES) else {
+    if client.write_frame(&bytes).is_err() {
+        return VerifyOutcome::ServiceUnavailable;
+    }
+    let Ok(resp_bytes) = client.read_frame() else {
         return VerifyOutcome::ServiceUnavailable;
     };
-    let Ok(resp) = Response::from_bytes(&resp_bytes) else {
+    let Ok(resp) = Response::decode(&resp_bytes) else {
         return VerifyOutcome::ServiceUnavailable;
     };
 
