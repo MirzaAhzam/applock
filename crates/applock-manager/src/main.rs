@@ -128,6 +128,220 @@ fn refresh_app_model(window: &ManagerWindow, cached: &Rc<RefCell<Vec<String>>>, 
     window.set_apps(ModelRc::new(VecModel::from(entries)));
 }
 
+fn wire_gate_callbacks(
+    window: &ManagerWindow,
+    current_lang: &Rc<Cell<Language>>,
+    cached_apps: &Rc<RefCell<Vec<String>>>,
+) {
+    let weak = window.as_weak();
+    let lang_cell = Rc::clone(current_lang);
+    let apps_cache = Rc::clone(cached_apps);
+    window.on_gate_submitted(move |secret| {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let lock_s = LockStrings::load(lang_cell.get());
+        if secret.is_empty() {
+            w.set_gate_error(lock_s.wrong_credential.into());
+            return;
+        }
+        let mut nonce = [0_u8; 16];
+        if fill_random(&mut nonce).is_err() {
+            w.set_gate_error(lock_s.service_offline.into());
+            return;
+        }
+        let req = Request::VerifyCredential {
+            nonce,
+            target_pid: 0,
+            secret: secret.as_bytes().to_vec(),
+        };
+        w.set_gate_pin("".into());
+        match send_ipc(&req) {
+            Some(Response::CredentialResult {
+                nonce: r_nonce,
+                allowed: true,
+                ..
+            }) if r_nonce == nonce => {
+                w.set_gate_error("".into());
+                w.set_unlocked(true);
+                refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
+            }
+            Some(Response::CredentialResult {
+                nonce: r_nonce,
+                allowed: false,
+                lockout_remaining_secs,
+            }) if r_nonce == nonce => {
+                if lockout_remaining_secs > 0 {
+                    let msg = format!(
+                        "{} {}{}",
+                        lock_s.lockout_prefix, lockout_remaining_secs, lock_s.seconds_suffix
+                    );
+                    w.set_gate_error(msg.into());
+                } else {
+                    w.set_gate_error(lock_s.wrong_credential.into());
+                }
+            }
+            _ => w.set_gate_error(lock_s.service_offline.into()),
+        }
+    });
+}
+
+fn wire_apps_callbacks(window: &ManagerWindow, cached_apps: &Rc<RefCell<Vec<String>>>) {
+    let weak = window.as_weak();
+    let apps_cache = Rc::clone(cached_apps);
+    window.on_search_changed(move |query| {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let entries = filter_apps(&apps_cache.borrow(), query.as_str());
+        w.set_apps(ModelRc::new(VecModel::from(entries)));
+    });
+
+    let weak = window.as_weak();
+    let apps_cache = Rc::clone(cached_apps);
+    window.on_add_app_submitted(move |raw_name| {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let trimmed = raw_name.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+        let mut nonce = [0_u8; 16];
+        if fill_random(&mut nonce).is_err() {
+            return;
+        }
+        let req = Request::SetAppLocked {
+            nonce,
+            app_id: trimmed.to_string(),
+            locked: true,
+        };
+        if matches!(
+            send_ipc(&req),
+            Some(Response::Ack {
+                nonce: r_nonce,
+                ok: true
+            }) if r_nonce == nonce
+        ) {
+            w.set_add_input("".into());
+            refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
+        }
+    });
+
+    let weak = window.as_weak();
+    let apps_cache = Rc::clone(cached_apps);
+    window.on_toggle_app(move |name, locked| {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let mut nonce = [0_u8; 16];
+        if fill_random(&mut nonce).is_err() {
+            return;
+        }
+        let req = Request::SetAppLocked {
+            nonce,
+            app_id: name.to_string(),
+            locked,
+        };
+        if matches!(
+            send_ipc(&req),
+            Some(Response::Ack {
+                nonce: r_nonce,
+                ok: true
+            }) if r_nonce == nonce
+        ) {
+            refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
+        }
+    });
+}
+
+fn wire_security_callbacks(
+    window: &ManagerWindow,
+    current_lang: &Rc<Cell<Language>>,
+    dark_mode: &Rc<Cell<bool>>,
+) {
+    let weak = window.as_weak();
+    let lang_cell = Rc::clone(current_lang);
+    window.on_change_pin_submitted(move |curr, new_p, conf| {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let lock_s = LockStrings::load(lang_cell.get());
+        let mgr_s = ManagerStrings::load(lang_cell.get());
+        if new_p.len() < 4 {
+            w.set_security_is_error(true);
+            w.set_security_status(mgr_s.pin_too_short.into());
+            return;
+        }
+        if new_p != conf {
+            w.set_security_is_error(true);
+            w.set_security_status(mgr_s.pin_mismatch.into());
+            return;
+        }
+        let mut nonce = [0_u8; 16];
+        if fill_random(&mut nonce).is_err() {
+            w.set_security_is_error(true);
+            w.set_security_status(lock_s.service_offline.into());
+            return;
+        }
+        let req = Request::ChangePin {
+            nonce,
+            current_secret: curr.as_bytes().to_vec(),
+            new_secret: new_p.as_bytes().to_vec(),
+        };
+        w.set_current_pin_input("".into());
+        w.set_new_pin_input("".into());
+        w.set_confirm_pin_input("".into());
+        match send_ipc(&req) {
+            Some(Response::CredentialResult {
+                nonce: r_nonce,
+                allowed: true,
+                ..
+            }) if r_nonce == nonce => {
+                w.set_security_is_error(false);
+                w.set_security_status(mgr_s.pin_saved.into());
+            }
+            Some(Response::CredentialResult {
+                nonce: r_nonce,
+                allowed: false,
+                ..
+            }) if r_nonce == nonce => {
+                w.set_security_is_error(true);
+                w.set_security_status(lock_s.wrong_credential.into());
+            }
+            _ => {
+                w.set_security_is_error(true);
+                w.set_security_status(lock_s.service_offline.into());
+            }
+        }
+    });
+
+    let weak = window.as_weak();
+    let lang_cell = Rc::clone(current_lang);
+    window.on_toggle_language(move || {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let next = match lang_cell.get() {
+            Language::En => Language::Ur,
+            Language::Ur => Language::En,
+        };
+        lang_cell.set(next);
+        apply_strings(&w, next);
+    });
+
+    let weak = window.as_weak();
+    let theme_cell = Rc::clone(dark_mode);
+    window.on_toggle_theme(move || {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let next = !theme_cell.get();
+        theme_cell.set(next);
+        w.global::<Tokens>().set_dark_mode(next);
+    });
+}
+
 fn main() -> ExitCode {
     let args = parse_args(std::env::args().skip(1));
     let Ok(window) = ManagerWindow::new() else {
@@ -141,226 +355,9 @@ fn main() -> ExitCode {
     window.global::<Tokens>().set_dark_mode(args.dark);
     apply_strings(&window, args.lang);
 
-    // Gate unlock callback
-    {
-        let weak = window.as_weak();
-        let lang_cell = Rc::clone(&current_lang);
-        let apps_cache = Rc::clone(&cached_apps);
-        window.on_gate_submitted(move |secret| {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let lock_s = LockStrings::load(lang_cell.get());
-            if secret.is_empty() {
-                w.set_gate_error(lock_s.wrong_credential.into());
-                return;
-            }
-            let mut nonce = [0_u8; 16];
-            if fill_random(&mut nonce).is_err() {
-                w.set_gate_error(lock_s.service_offline.into());
-                return;
-            }
-            let req = Request::VerifyCredential {
-                nonce,
-                target_pid: 0,
-                secret: secret.as_bytes().to_vec(),
-            };
-            w.set_gate_pin("".into());
-            match send_ipc(&req) {
-                Some(Response::CredentialResult {
-                    nonce: r_nonce,
-                    allowed: true,
-                    ..
-                }) if r_nonce == nonce => {
-                    w.set_gate_error("".into());
-                    w.set_unlocked(true);
-                    refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
-                }
-                Some(Response::CredentialResult {
-                    nonce: r_nonce,
-                    allowed: false,
-                    lockout_remaining_secs,
-                }) if r_nonce == nonce => {
-                    if lockout_remaining_secs > 0 {
-                        let msg = format!(
-                            "{} {}{}",
-                            lock_s.lockout_prefix, lockout_remaining_secs, lock_s.seconds_suffix
-                        );
-                        w.set_gate_error(msg.into());
-                    } else {
-                        w.set_gate_error(lock_s.wrong_credential.into());
-                    }
-                }
-                _ => w.set_gate_error(lock_s.service_offline.into()),
-            }
-        });
-    }
-
-    // Search callback
-    {
-        let weak = window.as_weak();
-        let apps_cache = Rc::clone(&cached_apps);
-        window.on_search_changed(move |query| {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let entries = filter_apps(&apps_cache.borrow(), query.as_str());
-            w.set_apps(ModelRc::new(VecModel::from(entries)));
-        });
-    }
-
-    // Add app callback
-    {
-        let weak = window.as_weak();
-        let apps_cache = Rc::clone(&cached_apps);
-        window.on_add_app_submitted(move |raw_name| {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let trimmed = raw_name.trim();
-            if trimmed.is_empty() {
-                return;
-            }
-            let mut nonce = [0_u8; 16];
-            if fill_random(&mut nonce).is_err() {
-                return;
-            }
-            let req = Request::SetAppLocked {
-                nonce,
-                app_id: trimmed.to_string(),
-                locked: true,
-            };
-            if matches!(
-                send_ipc(&req),
-                Some(Response::Ack {
-                    nonce: r_nonce,
-                    ok: true
-                }) if r_nonce == nonce
-            ) {
-                w.set_add_input("".into());
-                refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
-            }
-        });
-    }
-
-    // Toggle app lock callback
-    {
-        let weak = window.as_weak();
-        let apps_cache = Rc::clone(&cached_apps);
-        window.on_toggle_app(move |name, locked| {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let mut nonce = [0_u8; 16];
-            if fill_random(&mut nonce).is_err() {
-                return;
-            }
-            let req = Request::SetAppLocked {
-                nonce,
-                app_id: name.to_string(),
-                locked,
-            };
-            if matches!(
-                send_ipc(&req),
-                Some(Response::Ack {
-                    nonce: r_nonce,
-                    ok: true
-                }) if r_nonce == nonce
-            ) {
-                refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
-            }
-        });
-    }
-
-    // Change PIN callback
-    {
-        let weak = window.as_weak();
-        let lang_cell = Rc::clone(&current_lang);
-        window.on_change_pin_submitted(move |curr, new_p, conf| {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let lock_s = LockStrings::load(lang_cell.get());
-            let mgr_s = ManagerStrings::load(lang_cell.get());
-            if new_p.len() < 4 {
-                w.set_security_is_error(true);
-                w.set_security_status(mgr_s.pin_too_short.into());
-                return;
-            }
-            if new_p != conf {
-                w.set_security_is_error(true);
-                w.set_security_status(mgr_s.pin_mismatch.into());
-                return;
-            }
-            let mut nonce = [0_u8; 16];
-            if fill_random(&mut nonce).is_err() {
-                w.set_security_is_error(true);
-                w.set_security_status(lock_s.service_offline.into());
-                return;
-            }
-            let req = Request::ChangePin {
-                nonce,
-                current_secret: curr.as_bytes().to_vec(),
-                new_secret: new_p.as_bytes().to_vec(),
-            };
-            w.set_current_pin_input("".into());
-            w.set_new_pin_input("".into());
-            w.set_confirm_pin_input("".into());
-            match send_ipc(&req) {
-                Some(Response::CredentialResult {
-                    nonce: r_nonce,
-                    allowed: true,
-                    ..
-                }) if r_nonce == nonce => {
-                    w.set_security_is_error(false);
-                    w.set_security_status(mgr_s.pin_saved.into());
-                }
-                Some(Response::CredentialResult {
-                    nonce: r_nonce,
-                    allowed: false,
-                    ..
-                }) if r_nonce == nonce => {
-                    w.set_security_is_error(true);
-                    w.set_security_status(lock_s.wrong_credential.into());
-                }
-                _ => {
-                    w.set_security_is_error(true);
-                    w.set_security_status(lock_s.service_offline.into());
-                }
-            }
-        });
-    }
-
-    // Language toggle
-    {
-        let weak = window.as_weak();
-        let lang_cell = Rc::clone(&current_lang);
-        window.on_toggle_language(move || {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let next = match lang_cell.get() {
-                Language::En => Language::Ur,
-                Language::Ur => Language::En,
-            };
-            lang_cell.set(next);
-            apply_strings(&w, next);
-        });
-    }
-
-    // Theme toggle
-    {
-        let weak = window.as_weak();
-        let theme_cell = Rc::clone(&dark_mode);
-        window.on_toggle_theme(move || {
-            let Some(w) = weak.upgrade() else {
-                return;
-            };
-            let next = !theme_cell.get();
-            theme_cell.set(next);
-            w.global::<Tokens>().set_dark_mode(next);
-        });
-    }
+    wire_gate_callbacks(&window, &current_lang, &cached_apps);
+    wire_apps_callbacks(&window, &cached_apps);
+    wire_security_callbacks(&window, &current_lang, &dark_mode);
 
     if window.run().is_err() {
         return ExitCode::FAILURE;
