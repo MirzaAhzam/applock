@@ -20,8 +20,13 @@ pub fn hash_secret(secret: &[u8]) -> Result<String, CoreError> {
     let mut salt_bytes = Zeroizing::new([0_u8; 16]);
     fill_random(&mut *salt_bytes)?;
     let salt = SaltString::encode_b64(&*salt_bytes).map_err(|_| CoreError::Crypto)?;
-    let params = Params::new(ARGON2_MEMORY_KIB, ARGON2_ITERATIONS, ARGON2_PARALLELISM, None)
-        .map_err(|_| CoreError::Crypto)?;
+    let params = Params::new(
+        ARGON2_MEMORY_KIB,
+        ARGON2_ITERATIONS,
+        ARGON2_PARALLELISM,
+        None,
+    )
+    .map_err(|_| CoreError::Crypto)?;
     let hasher = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let hash = hasher
         .hash_password(secret, &salt)

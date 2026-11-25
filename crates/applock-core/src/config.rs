@@ -58,7 +58,8 @@ impl AppConfig {
             }
             None => out.push(0),
         }
-        let app_count = u32::try_from(self.locked_apps.len()).map_err(|_| CoreError::CorruptConfig)?;
+        let app_count =
+            u32::try_from(self.locked_apps.len()).map_err(|_| CoreError::CorruptConfig)?;
         out.extend_from_slice(&app_count.to_le_bytes());
         for app in &self.locked_apps {
             write_str(&mut out, &app.app_id)?;

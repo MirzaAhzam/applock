@@ -177,8 +177,9 @@ impl Request {
                 if !tail.is_empty() {
                     return Err(IpcError::TrailingBytes);
                 }
-                let app_id =
-                    std::str::from_utf8(raw).map_err(|_| IpcError::MalformedPayload)?.to_string();
+                let app_id = std::str::from_utf8(raw)
+                    .map_err(|_| IpcError::MalformedPayload)?
+                    .to_string();
                 Ok(Self::QueryAppLocked { nonce, app_id })
             }
             3 => {
@@ -366,7 +367,9 @@ mod tests {
     #[test]
     fn rejects_invalid_frames_and_trailing_bytes() {
         assert_eq!(Request::decode(&[]), Err(IpcError::InvalidLength));
-        let mut frame = Request::Ping { nonce: [0_u8; 16] }.encode().expect("encode");
+        let mut frame = Request::Ping { nonce: [0_u8; 16] }
+            .encode()
+            .expect("encode");
         frame.push(0xAA);
         assert_eq!(Request::decode(&frame), Err(IpcError::TrailingBytes));
 
