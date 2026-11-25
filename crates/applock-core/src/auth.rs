@@ -54,13 +54,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn argon2id_hash_and_verify_round_trip() {
+    fn argon2id_hash_and_verify_round_trip() -> Result<(), CoreError> {
         let pin = Zeroizing::new(b"482910".to_vec());
-        let phc = hash_secret(&pin).expect("hash");
+        let phc = hash_secret(&pin)?;
         assert!(phc.starts_with("$argon2id$"));
         assert!(verify_secret(&phc, &pin));
         assert!(!verify_secret(&phc, b"000000"));
         assert!(!verify_secret("corrupt-hash", &pin));
+        Ok(())
     }
 
     #[test]

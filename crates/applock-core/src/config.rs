@@ -246,7 +246,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dpapi_atomic_save_and_backup_recovery_work() {
+    fn dpapi_atomic_save_and_backup_recovery_work() -> Result<(), CoreError> {
         let dir = std::env::temp_dir().join(format!("applock_cfg_test_{}", std::process::id()));
         let cfg_path = dir.join("config.bin");
 
@@ -264,17 +264,18 @@ mod tests {
             }],
         };
 
-        save_atomic(&cfg_path, &cfg).expect("save 1");
-        save_atomic(&cfg_path, &cfg).expect("save 2 creates .bak");
+        save_atomic(&cfg_path, &cfg)?;
+        save_atomic(&cfg_path, &cfg)?;
 
-        let loaded = load_fail_closed(&cfg_path).expect("load");
+        let loaded = load_fail_closed(&cfg_path)?;
         assert_eq!(loaded, cfg);
 
         // Tamper primary config; fail-closed loader recovers last-known-good .bak.
-        fs::write(&cfg_path, b"tampered-bytes").expect("tamper");
-        let recovered = load_fail_closed(&cfg_path).expect("recover from .bak");
+        fs::write(&cfg_path, b"tampered-bytes")?;
+        let recovered = load_fail_closed(&cfg_path)?;
         assert_eq!(recovered, cfg);
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
     }
 }

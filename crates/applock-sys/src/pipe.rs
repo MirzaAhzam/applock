@@ -276,24 +276,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pipe_server_and_client_round_trip() {
+    fn pipe_server_and_client_round_trip() -> Result<(), WinError> {
         let name = format!(r"\\.\pipe\AppLockTestPipe_{}", std::process::id());
-        let server = PipeServer::create(&name).expect("create pipe");
-        let name_clone = name.clone();
-        let client_thread = std::thread::spawn(move || {
-            let client = PipeClient::connect(&name_clone, 2000).expect("connect");
-            client.write_frame(b"ping").expect("write");
-            client.read_frame().expect("read")
+        let server = PipeServer::create(&name)?;
+        let name_clone = name;
+        let client_thread = std::thread::spawn(move || -> Result<Vec<u8>, WinError> {
+            let client = PipeClient::connect(&name_clone, 2000)?;
+            client.write_frame(b"ping")?;
+            client.read_frame()
         });
 
-        let id = server.accept().expect("accept");
+        let id = server.accept()?;
         assert_eq!(id.pid, std::process::id());
-        let req = server.read_frame().expect("server read");
+        let req = server.read_frame()?;
         assert_eq!(req, b"ping");
-        server.write_frame(b"pong").expect("server write");
+        server.write_frame(b"pong")?;
         server.disconnect();
 
-        let resp = client_thread.join().expect("join");
+        let resp = match client_thread.join() {
+            Ok(res) => res?,
+            Err(_) => return Err(WinError { code: 1, context: "join" }),
+        };
         assert_eq!(resp, b"pong");
+        Ok(())
     }
 }

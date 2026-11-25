@@ -133,15 +133,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn random_and_dpapi_round_trip() {
+    fn random_and_dpapi_round_trip() -> Result<(), WinError> {
         let mut buf = [0_u8; 32];
-        fill_random(&mut buf).expect("CSPRNG");
+        fill_random(&mut buf)?;
         assert!(buf.iter().any(|&b| b != 0));
 
         let plain = b"applock-dpapi-test-payload";
-        let sealed = dpapi_protect_machine(plain).expect("protect");
+        let sealed = dpapi_protect_machine(plain)?;
         assert_ne!(sealed.as_slice(), plain);
-        let opened = dpapi_unprotect_machine(&sealed).expect("unprotect");
+        let opened = dpapi_unprotect_machine(&sealed)?;
         assert_eq!(opened.as_slice(), plain);
+        Ok(())
     }
 }

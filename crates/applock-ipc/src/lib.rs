@@ -331,15 +331,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_trip_requests_and_responses() {
+    fn round_trip_requests_and_responses() -> Result<(), IpcError> {
         let nonce = [7_u8; 16];
         let req = Request::VerifyCredential {
             nonce,
             target_pid: 4242,
             secret: b"1234".to_vec(),
         };
-        let encoded = req.encode().expect("encode");
-        let decoded = Request::decode(&encoded).expect("decode");
+        let encoded = req.encode()?;
+        let decoded = Request::decode(&encoded)?;
         assert_eq!(req, decoded);
 
         let resp = Response::CredentialResult {
@@ -347,9 +347,10 @@ mod tests {
             allowed: false,
             lockout_remaining_secs: 30,
         };
-        let r_enc = resp.encode().expect("encode");
-        let r_dec = Response::decode(&r_enc).expect("decode");
+        let r_enc = resp.encode()?;
+        let r_dec = Response::decode(&r_enc)?;
         assert_eq!(resp, r_dec);
+        Ok(())
     }
 
     #[test]
@@ -365,11 +366,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_frames_and_trailing_bytes() {
+    fn rejects_invalid_frames_and_trailing_bytes() -> Result<(), IpcError> {
         assert_eq!(Request::decode(&[]), Err(IpcError::InvalidLength));
-        let mut frame = Request::Ping { nonce: [0_u8; 16] }
-            .encode()
-            .expect("encode");
+        let mut frame = Request::Ping { nonce: [0_u8; 16] }.encode()?;
         frame.push(0xAA);
         assert_eq!(Request::decode(&frame), Err(IpcError::TrailingBytes));
 
@@ -382,5 +381,6 @@ mod tests {
 
         let oversized = vec![0_u8; MAX_MESSAGE_BYTES + 1];
         assert_eq!(Request::decode(&oversized), Err(IpcError::InvalidLength));
+        Ok(())
     }
 }
