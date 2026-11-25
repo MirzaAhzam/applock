@@ -67,6 +67,29 @@ pub enum Request {
         /// Plaintext attempt bytes (redacted in `Debug` output).
         secret: Vec<u8>,
     },
+    /// List currently locked app IDs (Manager UI).
+    ListLockedApps {
+        /// Per-request random nonce.
+        nonce: [u8; 16],
+    },
+    /// Enable or disable lock for a specific app ID (Manager UI).
+    SetAppLocked {
+        /// Per-request random nonce.
+        nonce: [u8; 16],
+        /// Normalized executable name (e.g. `notepad.exe`).
+        app_id: String,
+        /// `true` to lock, `false` to unlock.
+        locked: bool,
+    },
+    /// Change the master PIN/password after verifying the current one.
+    ChangePin {
+        /// Per-request random nonce.
+        nonce: [u8; 16],
+        /// Current PIN/password bytes (redacted in `Debug` output).
+        current_secret: Vec<u8>,
+        /// New PIN/password bytes (redacted in `Debug` output).
+        new_secret: Vec<u8>,
+    },
 }
 
 impl fmt::Debug for Request {
@@ -85,6 +108,26 @@ impl fmt::Debug for Request {
                 .field("nonce", nonce)
                 .field("target_pid", target_pid)
                 .field("secret", &"[REDACTED]")
+                .finish(),
+            Self::ListLockedApps { nonce } => f
+                .debug_struct("ListLockedApps")
+                .field("nonce", nonce)
+                .finish(),
+            Self::SetAppLocked {
+                nonce,
+                app_id,
+                locked,
+            } => f
+                .debug_struct("SetAppLocked")
+                .field("nonce", nonce)
+                .field("app_id", app_id)
+                .field("locked", locked)
+                .finish(),
+            Self::ChangePin { nonce, .. } => f
+                .debug_struct("ChangePin")
+                .field("nonce", nonce)
+                .field("current_secret", &"[REDACTED]")
+                .field("new_secret", &"[REDACTED]")
                 .finish(),
         }
     }
@@ -105,7 +148,7 @@ pub enum Response {
         /// `true` if the app must be locked right now.
         locked: bool,
     },
-    /// Reply to `VerifyCredential`.
+    /// Reply to `VerifyCredential` and `ChangePin`.
     CredentialResult {
         /// Matching request nonce.
         nonce: [u8; 16],
@@ -113,6 +156,20 @@ pub enum Response {
         allowed: bool,
         /// Remaining lockout wait in seconds (`0` if not locked out).
         lockout_remaining_secs: u64,
+    },
+    /// Reply to `ListLockedApps`.
+    LockedApps {
+        /// Matching request nonce.
+        nonce: [u8; 16],
+        /// Currently locked app IDs.
+        apps: Vec<String>,
+    },
+    /// Generic acknowledgement (`SetAppLocked`).
+    Ack {
+        /// Matching request nonce.
+        nonce: [u8; 16],
+        /// `true` if the operation succeeded.
+        ok: bool,
     },
     /// Generic protocol/validation error (never reveals internals).
     Error {
@@ -151,6 +208,30 @@ impl Request {
                 out.extend_from_slice(nonce);
                 out.extend_from_slice(&target_pid.to_le_bytes());
                 write_bytes(&mut out, secret)?;
+            }
+            Self::ListLockedApps { nonce } => {
+                out.push(4);
+                out.extend_from_slice(nonce);
+            }
+            Self::SetAppLocked {
+                nonce,
+                app_id,
+                locked,
+            } => {
+                out.push(5);
+                out.extend_from_slice(nonce);
+                write_bytes(&mut out, app_id.as_bytes())?;
+                out.push(u8::from(*locked));
+            }
+            Self::ChangePin {
+                nonce,
+                current_secret,
+                new_secret,
+            } => {
+                out.push(6);
+                out.extend_from_slice(nonce);
+                write_bytes(&mut out, current_secret)?;
+                write_bytes(&mut out, new_secret)?;
             }
         }
         if out.len() > MAX_MESSAGE_BYTES {
@@ -197,6 +278,38 @@ impl Request {
                     secret: secret_slice.to_vec(),
                 })
             }
+            4 => {
+                if !rest.is_empty() {
+                    return Err(IpcError::TrailingBytes);
+                }
+                Ok(Self::ListLockedApps { nonce })
+            }
+            5 => {
+                let (raw_id, tail) = read_bytes(rest)?;
+                if tail.len() != 1 || tail[0] > 1 {
+                    return Err(IpcError::MalformedPayload);
+                }
+                let app_id = std::str::from_utf8(raw_id)
+                    .map_err(|_| IpcError::MalformedPayload)?
+                    .to_string();
+                Ok(Self::SetAppLocked {
+                    nonce,
+                    app_id,
+                    locked: tail[0] == 1,
+                })
+            }
+            6 => {
+                let (curr, tail) = read_bytes(rest)?;
+                let (new_s, end) = read_bytes(tail)?;
+                if !end.is_empty() {
+                    return Err(IpcError::TrailingBytes);
+                }
+                Ok(Self::ChangePin {
+                    nonce,
+                    current_secret: curr.to_vec(),
+                    new_secret: new_s.to_vec(),
+                })
+            }
             other => Err(IpcError::UnknownKind(other)),
         }
     }
@@ -230,6 +343,20 @@ impl Response {
                 out.extend_from_slice(nonce);
                 out.push(u8::from(*allowed));
                 out.extend_from_slice(&lockout_remaining_secs.to_le_bytes());
+            }
+            Self::LockedApps { nonce, apps } => {
+                out.push(104);
+                out.extend_from_slice(nonce);
+                let count = u16::try_from(apps.len()).map_err(|_| IpcError::InvalidLength)?;
+                out.extend_from_slice(&count.to_le_bytes());
+                for app in apps {
+                    write_bytes(&mut out, app.as_bytes())?;
+                }
+            }
+            Self::Ack { nonce, ok } => {
+                out.push(105);
+                out.extend_from_slice(nonce);
+                out.push(u8::from(*ok));
             }
             Self::Error { nonce, code } => {
                 out.push(255);
@@ -276,6 +403,35 @@ impl Response {
                     nonce,
                     allowed: rest[0] == 1,
                     lockout_remaining_secs: secs,
+                })
+            }
+            104 => {
+                if rest.len() < 2 {
+                    return Err(IpcError::MalformedPayload);
+                }
+                let count = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
+                let mut cursor = &rest[2..];
+                let mut apps = Vec::with_capacity(count.min(256));
+                for _ in 0..count {
+                    let (raw, next) = read_bytes(cursor)?;
+                    let app = std::str::from_utf8(raw)
+                        .map_err(|_| IpcError::MalformedPayload)?
+                        .to_string();
+                    apps.push(app);
+                    cursor = next;
+                }
+                if !cursor.is_empty() {
+                    return Err(IpcError::TrailingBytes);
+                }
+                Ok(Self::LockedApps { nonce, apps })
+            }
+            105 => {
+                if rest.len() != 1 || rest[0] > 1 {
+                    return Err(IpcError::MalformedPayload);
+                }
+                Ok(Self::Ack {
+                    nonce,
+                    ok: rest[0] == 1,
                 })
             }
             255 => {
@@ -363,6 +519,46 @@ mod tests {
         let dbg_str = format!("{req:?}");
         assert!(!dbg_str.contains("supersecretpin"));
         assert!(dbg_str.contains("[REDACTED]"));
+
+        let cp = Request::ChangePin {
+            nonce: [2_u8; 16],
+            current_secret: b"oldsecret99".to_vec(),
+            new_secret: b"newsecret88".to_vec(),
+        };
+        let cp_dbg = format!("{cp:?}");
+        assert!(!cp_dbg.contains("oldsecret99"));
+        assert!(!cp_dbg.contains("newsecret88"));
+        assert!(cp_dbg.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn round_trip_manager_messages() -> Result<(), IpcError> {
+        let nonce = [9_u8; 16];
+        let msgs = [
+            Request::ListLockedApps { nonce },
+            Request::SetAppLocked {
+                nonce,
+                app_id: "whatsapp.exe".to_string(),
+                locked: true,
+            },
+            Request::ChangePin {
+                nonce,
+                current_secret: b"1234".to_vec(),
+                new_secret: b"5678".to_vec(),
+            },
+        ];
+        for req in msgs {
+            let enc = req.encode()?;
+            assert_eq!(Request::decode(&enc)?, req);
+        }
+        let resp = Response::LockedApps {
+            nonce,
+            apps: vec!["notepad.exe".to_string(), "whatsapp.exe".to_string()],
+        };
+        assert_eq!(Response::decode(&resp.encode()?)?, resp);
+        let ack = Response::Ack { nonce, ok: true };
+        assert_eq!(Response::decode(&ack.encode()?)?, ack);
+        Ok(())
     }
 
     #[test]

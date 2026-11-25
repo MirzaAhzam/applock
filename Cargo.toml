@@ -8,6 +8,7 @@ members = [
   "crates/applock-service",
   "crates/applock-agent",
   "crates/applock-lockui",
+  "crates/applock-manager",
   "xtask",
 ]
 
