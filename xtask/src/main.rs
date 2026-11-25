@@ -116,7 +116,7 @@ fn check_budgets(bin_dir: &str) -> ExitCode {
     }
 }
 
-fn find_iscc() -> Option<PathBuf> {
+fn find_iscc() -> PathBuf {
     let candidates = [
         r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
         r"C:\Program Files\Inno Setup 6\ISCC.exe",
@@ -124,10 +124,10 @@ fn find_iscc() -> Option<PathBuf> {
     for c in candidates {
         let p = PathBuf::from(c);
         if p.exists() {
-            return Some(p);
+            return p;
         }
     }
-    Some(PathBuf::from("iscc.exe"))
+    PathBuf::from("iscc.exe")
 }
 
 fn package_release(args: &PackageArgs) -> ExitCode {
@@ -174,10 +174,7 @@ fn package_release(args: &PackageArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    let Some(iscc) = find_iscc() else {
-        eprintln!("Inno Setup ISCC.exe not found");
-        return ExitCode::FAILURE;
-    };
+    let iscc = find_iscc();
     let setup_name = format!("applock-{}-{arch}-setup.exe", args.version);
     let setup_path = dist_dir.join(&setup_name);
 
@@ -197,23 +194,20 @@ fn package_release(args: &PackageArgs) -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    match fs::metadata(&setup_path) {
-        Ok(meta) => {
-            let size = meta.len();
-            let pass = size <= INSTALLER_MAX_BYTES;
-            println!(
-                "{}: {size} bytes (limit {INSTALLER_MAX_BYTES} bytes) [{}]",
-                setup_path.display(),
-                if pass { "PASS" } else { "FAIL" }
-            );
-            if !pass {
-                return ExitCode::FAILURE;
-            }
-        }
-        Err(_) => {
-            eprintln!("installer output missing: {}", setup_path.display());
+    if let Ok(meta) = fs::metadata(&setup_path) {
+        let size = meta.len();
+        let pass = size <= INSTALLER_MAX_BYTES;
+        println!(
+            "{}: {size} bytes (limit {INSTALLER_MAX_BYTES} bytes) [{}]",
+            setup_path.display(),
+            if pass { "PASS" } else { "FAIL" }
+        );
+        if !pass {
             return ExitCode::FAILURE;
         }
+    } else {
+        eprintln!("installer output missing: {}", setup_path.display());
+        return ExitCode::FAILURE;
     }
 
     let sum_path = dist_dir.join(format!("SHA256SUMS-{arch}.txt"));
