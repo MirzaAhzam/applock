@@ -15,7 +15,12 @@ use applock_ipc::{Request, Response};
 use applock_sys::crypto::fill_random;
 use applock_sys::pipe::{PipeClient, PIPE_NAME};
 
-slint::include_modules!();
+#[allow(clippy::all, clippy::pedantic, missing_docs)]
+mod slint_generated {
+    slint::include_modules!();
+}
+
+use slint_generated::{ComponentHandle, LockWindow, Tokens};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CliArgs {
