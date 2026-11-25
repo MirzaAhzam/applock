@@ -20,7 +20,8 @@ mod slint_generated {
     slint::include_modules!();
 }
 
-use slint_generated::{ComponentHandle, LockWindow, Tokens};
+use slint::ComponentHandle;
+use slint_generated::{LockWindow, Tokens};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CliArgs {
