@@ -258,9 +258,10 @@ impl fmt::Debug for Request {
                 .field("app_id", app_id)
                 .field("grace_seconds", grace_seconds)
                 .finish(),
-            Self::ListAppModes { nonce } => {
-                f.debug_struct("ListAppModes").field("nonce", nonce).finish()
-            }
+            Self::ListAppModes { nonce } => f
+                .debug_struct("ListAppModes")
+                .field("nonce", nonce)
+                .finish(),
         }
     }
 }

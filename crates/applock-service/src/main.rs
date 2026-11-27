@@ -19,8 +19,8 @@ use applock_sys::lock_dialog::{show_m0_lock_prompt, LockPromptOutcome};
 use applock_sys::pipe::{PipeServer, PIPE_NAME};
 use applock_sys::process::{
     current_cpu_time_100ns, current_private_memory_bytes, hide_process_windows,
-    launch_hidden_command, query_image_path, resume_process, show_process_windows,
-    suspend_process, terminate_process, wait_process_exit,
+    launch_hidden_command, query_image_path, resume_process, show_process_windows, suspend_process,
+    terminate_process, wait_process_exit,
 };
 use applock_sys::scm::{run_as_windows_service, ScmOutcome};
 use applock_sys::security::{
@@ -297,11 +297,7 @@ fn handle_set_app_locked(state: &Arc<Mutex<ServiceState>>, app_id: &str, locked:
     save_atomic(&path_clone, &cfg_clone).is_ok()
 }
 
-fn handle_set_app_mode(
-    state: &Arc<Mutex<ServiceState>>,
-    app_id: &str,
-    grace_seconds: u64,
-) -> bool {
+fn handle_set_app_mode(state: &Arc<Mutex<ServiceState>>, app_id: &str, grace_seconds: u64) -> bool {
     let normalized = app_id.trim().to_ascii_lowercase();
     if normalized.is_empty() {
         return false;
