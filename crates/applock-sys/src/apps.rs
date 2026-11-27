@@ -7,10 +7,10 @@ use std::mem::{size_of, zeroed};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HGDIOBJ, MAX_PATH};
+use windows_sys::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, MAX_PATH};
 use windows_sys::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
-    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
+    BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HGDIOBJ,
 };
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER,
@@ -579,8 +579,8 @@ unsafe fn hicon_to_rgba(hicon: HICON) -> Option<(u32, u32, Vec<u8>)> {
     let h = u32::try_from(bmp.bmHeight).ok()?;
     let mut pixels = vec![0_u8; usize::try_from(w.saturating_mul(h).saturating_mul(4)).ok()?];
 
-    let mut bmi: BITMAPINFO = zeroed();
-    bmi.bmiHeader = BITMAPINFOHEADER {
+    let mut dib_info: BITMAPINFO = zeroed();
+    dib_info.bmiHeader = BITMAPINFOHEADER {
         biSize: u32::try_from(size_of::<BITMAPINFOHEADER>()).unwrap_or(40),
         biWidth: bmp.bmWidth,
         biHeight: -bmp.bmHeight, // top-down
@@ -600,7 +600,7 @@ unsafe fn hicon_to_rgba(hicon: HICON) -> Option<(u32, u32, Vec<u8>)> {
             0,
             h,
             pixels.as_mut_ptr().cast(),
-            &raw mut bmi,
+            &raw mut dib_info,
             DIB_RGB_COLORS,
         )
     };
