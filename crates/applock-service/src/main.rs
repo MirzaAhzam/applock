@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use applock_core::activity::{ActivityEntry, ActivityLog};
 use applock_core::auth::{hash_secret, verify_secret};
 use applock_core::config::{
     append_tamper_event, load_with_marker, save_atomic, AppConfig, ConfigLoadOutcome,
@@ -40,6 +41,7 @@ struct ServiceState {
     config_path: PathBuf,
     config: AppConfig,
     rules: RuleEngine,
+    activity: ActivityLog,
 }
 
 fn main() -> ExitCode {
@@ -95,6 +97,16 @@ fn default_config_path() -> PathBuf {
             .join("config.bin");
     }
     PathBuf::from("config.bin")
+}
+
+fn activity_log_path(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map_or_else(
+            || PathBuf::from("logs").join("activity.log"),
+            |p| p.join("logs").join("activity.log"),
+        )
 }
 
 fn tamper_log_path(config_path: &Path) -> PathBuf {
@@ -232,6 +244,12 @@ fn verify_and_update(
         }
         let cfg_clone = guard.config.clone();
         let path_clone = guard.config_path.clone();
+        guard.activity.append(&ActivityEntry {
+            timestamp_unix_secs: now,
+            kind: "unlock".to_string(),
+            target: app_id.unwrap_or("manager").to_string(),
+            result: "allowed".to_string(),
+        });
         let _ = save_atomic(&path_clone, &cfg_clone);
         (true, 0)
     } else {
@@ -239,6 +257,12 @@ fn verify_and_update(
         let new_rem = guard.config.lockout.remaining_secs(now);
         let cfg_clone = guard.config.clone();
         let path_clone = guard.config_path.clone();
+        guard.activity.append(&ActivityEntry {
+            timestamp_unix_secs: now,
+            kind: "unlock".to_string(),
+            target: app_id.unwrap_or("manager").to_string(),
+            result: "denied".to_string(),
+        });
         let _ = save_atomic(&path_clone, &cfg_clone);
         (false, new_rem)
     }
@@ -292,6 +316,12 @@ fn handle_set_app_locked(state: &Arc<Mutex<ServiceState>>, app_id: &str, locked:
             .retain(|a| !a.app_id.eq_ignore_ascii_case(&normalized));
     }
     guard.rules = RuleEngine::from_apps(&guard.config.locked_apps);
+    guard.activity.append(&ActivityEntry {
+        timestamp_unix_secs: now_unix_secs(),
+        kind: "config".to_string(),
+        target: app_id.trim().to_ascii_lowercase(),
+        result: if locked { "locked" } else { "unlocked" }.to_string(),
+    });
     let cfg_clone = guard.config.clone();
     let path_clone = guard.config_path.clone();
     save_atomic(&path_clone, &cfg_clone).is_ok()
@@ -323,6 +353,12 @@ fn handle_set_app_mode(state: &Arc<Mutex<ServiceState>>, app_id: &str, grace_sec
         return false;
     }
     guard.rules = RuleEngine::from_apps(&guard.config.locked_apps);
+    guard.activity.append(&ActivityEntry {
+        timestamp_unix_secs: now_unix_secs(),
+        kind: "config".to_string(),
+        target: app_id.trim().to_ascii_lowercase(),
+        result: if locked { "locked" } else { "unlocked" }.to_string(),
+    });
     let cfg_clone = guard.config.clone();
     let path_clone = guard.config_path.clone();
     save_atomic(&path_clone, &cfg_clone).is_ok()
@@ -456,6 +492,23 @@ fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response 
             ok: handle_set_app_mode(state, &app_id, grace_seconds),
         },
         Ok(Request::ListAppModes { nonce }) => list_app_modes_response(state, nonce),
+        Ok(Request::ListActivityLog { nonce, limit }) => {
+            let entries = state
+                .lock()
+                .map(|g| {
+                    g.activity
+                        .read_recent(usize::from(limit))
+                        .into_iter()
+                        .map(|e| (e.timestamp_unix_secs, e.kind, e.target, e.result))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Response::ActivityLogEntries { nonce, entries }
+        }
+        Ok(Request::ClearActivityLog { nonce }) => {
+            let ok = state.lock().is_ok_and(|g| g.activity.clear().is_ok());
+            Response::Ack { nonce, ok }
+        }
         Err(_) => Response::Error {
             nonce: [0_u8; 16],
             code: 400,
@@ -468,6 +521,7 @@ fn run_service(args: &[String]) -> ExitCode {
     let apps_override: Vec<String> = args.iter().map(|s| s.to_ascii_lowercase()).collect();
     let config = load_or_init_config(&config_path, &apps_override);
     let rules = RuleEngine::from_apps(&config.locked_apps);
+    let activity = ActivityLog::new(activity_log_path(&config_path));
 
     println!("AppLock Service running (ETW + DPAPI config + Argon2id + Named Pipe).");
     println!("Config: {}", config_path.display());
@@ -477,6 +531,7 @@ fn run_service(args: &[String]) -> ExitCode {
         config_path,
         config,
         rules,
+        activity,
     }));
 
     spawn_pipe_server(Arc::clone(&state));

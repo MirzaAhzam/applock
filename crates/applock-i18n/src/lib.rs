@@ -84,8 +84,14 @@ pub struct ManagerStrings {
     pub tab_apps: String,
     /// Security navigation tab.
     pub tab_security: String,
+    /// Activity log navigation tab.
+    pub tab_activity: String,
     /// Honest limits navigation tab.
     pub tab_limits: String,
+    /// Clear activity log button label.
+    pub clear_log: String,
+    /// Empty activity log message.
+    pub empty_log: String,
     /// Search input placeholder.
     pub search_placeholder: String,
     /// Add executable input placeholder.
@@ -151,7 +157,10 @@ impl ManagerStrings {
             ),
             tab_apps: get("mgr_tab_apps", "Apps"),
             tab_security: get("mgr_tab_security", "Security"),
+            tab_activity: get("mgr_tab_activity", "Activity"),
             tab_limits: get("mgr_tab_limits", "Honest limits"),
+            clear_log: get("mgr_clear_log", "Clear log"),
+            empty_log: get("mgr_empty_log", "No activity recorded yet."),
             search_placeholder: get("mgr_search_placeholder", "Search apps"),
             add_placeholder: get(
                 "mgr_add_placeholder",

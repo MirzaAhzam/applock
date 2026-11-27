@@ -1,5 +1,6 @@
 //! Core `AppLock` rules, configuration persistence, authentication, and lockout logic.
 
+pub mod activity;
 pub mod auth;
 pub mod config;
 pub mod lockout;

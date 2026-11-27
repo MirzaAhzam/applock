@@ -32,7 +32,7 @@ mod slint_generated {
     slint::include_modules!();
 }
 
-use slint_generated::{AppEntry, ManagerWindow, Tokens};
+use slint_generated::{ActivityRow, AppEntry, ManagerWindow, Tokens};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct CliArgs {
@@ -180,7 +180,10 @@ fn apply_strings(window: &ManagerWindow, lang: Language) {
     window.set_unlock_label(lock_s.unlock_button.into());
     window.set_tab_apps_label(mgr_s.tab_apps.into());
     window.set_tab_security_label(mgr_s.tab_security.into());
+    window.set_tab_activity_label(mgr_s.tab_activity.into());
     window.set_tab_limits_label(mgr_s.tab_limits.into());
+    window.set_clear_log_label(mgr_s.clear_log.into());
+    window.set_empty_log_label(mgr_s.empty_log.into());
     window.set_search_placeholder(mgr_s.search_placeholder.into());
     window.set_add_placeholder(mgr_s.add_placeholder.into());
     window.set_add_button_label(mgr_s.add_button.into());
@@ -517,6 +520,56 @@ fn wire_security_callbacks(
     });
 }
 
+fn wire_activity_callbacks(window: &ManagerWindow) {
+    let weak = window.as_weak();
+    window.on_refresh_activity(move || {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let mut nonce = [0_u8; 16];
+        if fill_random(&mut nonce).is_err() {
+            return;
+        }
+        let rows: Vec<ActivityRow> =
+            match send_ipc(&Request::ListActivityLog { nonce, limit: 100 }) {
+                Some(Response::ActivityLogEntries {
+                    nonce: r_nonce,
+                    entries,
+                }) if r_nonce == nonce => entries
+                    .into_iter()
+                    .map(|(ts, kind, target, result)| ActivityRow {
+                        time: ts.to_string().into(),
+                        kind: kind.into(),
+                        target: target.into(),
+                        result: result.into(),
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            };
+        w.set_activity_rows(ModelRc::new(VecModel::from(rows)));
+    });
+
+    let weak = window.as_weak();
+    window.on_clear_activity(move || {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let mut nonce = [0_u8; 16];
+        if fill_random(&mut nonce).is_err() {
+            return;
+        }
+        if matches!(
+            send_ipc(&Request::ClearActivityLog { nonce }),
+            Some(Response::Ack {
+                nonce: r_nonce,
+                ok: true
+            }) if r_nonce == nonce
+        ) {
+            w.set_activity_rows(ModelRc::new(VecModel::from(Vec::<ActivityRow>::new())));
+        }
+    });
+}
+
 fn main() -> ExitCode {
     let args = parse_args(std::env::args().skip(1));
     let Ok(window) = ManagerWindow::new() else {
@@ -533,6 +586,7 @@ fn main() -> ExitCode {
     wire_gate_callbacks(&window, &current_lang, &locked_cache);
     wire_apps_callbacks(&window, &locked_cache);
     wire_security_callbacks(&window, &current_lang, &dark_mode);
+    wire_activity_callbacks(&window);
 
     if window.run().is_err() {
         return ExitCode::FAILURE;
