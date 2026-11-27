@@ -8,22 +8,22 @@ use std::path::Path;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{
-    ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, GetLastError, HLOCAL, LocalFree,
+    GetLastError, LocalFree, ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, HLOCAL,
 };
 use windows_sys::Win32::Security::Authorization::{
     ConvertStringSecurityDescriptorToSecurityDescriptorW, GetNamedSecurityInfoW,
     SetNamedSecurityInfoW, SE_FILE_OBJECT, SE_REGISTRY_KEY,
 };
 use windows_sys::Win32::Security::{
-    ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_ACE_TYPE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
-    CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
-    GetSecurityDescriptorControl, GetSecurityDescriptorDacl, PSECURITY_DESCRIPTOR,
-    PROTECTED_DACL_SECURITY_INFORMATION, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR_CONTROL,
-    SE_DACL_PROTECTED, WinBuiltinAdministratorsSid, WinLocalSystemSid,
+    AclSizeInformation, CreateWellKnownSid, EqualSid, GetAce, GetAclInformation,
+    GetSecurityDescriptorControl, GetSecurityDescriptorDacl, WinBuiltinAdministratorsSid,
+    WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_ACE_TYPE, ACL, ACL_SIZE_INFORMATION,
+    DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
+    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR_CONTROL, SE_DACL_PROTECTED,
 };
 use windows_sys::Win32::System::Registry::{
-    HKEY, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE, RegCloseKey,
-    RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
+    HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE,
 };
 
 use crate::{to_wide_null, WinError};
@@ -307,11 +307,7 @@ fn well_known_sid(sid_type: i32) -> Result<Vec<u8>, WinError> {
     Ok(buf)
 }
 
-fn apply_protected_sddl(
-    object_wide: &[u16],
-    object_type: i32,
-    sddl: &str,
-) -> Result<(), WinError> {
+fn apply_protected_sddl(object_wide: &[u16], object_type: i32, sddl: &str) -> Result<(), WinError> {
     let sddl_wide = to_wide_null(sddl);
     let mut sd: PSECURITY_DESCRIPTOR = ptr::null_mut();
 
@@ -405,3 +401,4 @@ mod tests {
         Ok(())
     }
 }
+

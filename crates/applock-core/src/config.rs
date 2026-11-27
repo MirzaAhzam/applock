@@ -354,7 +354,10 @@ mod tests {
         fs::write(&cfg_path, b"tampered-bytes")?;
         let outcome = load_with_marker(&cfg_path, true)?;
         assert_eq!(outcome, ConfigLoadOutcome::RecoveredFromBackup(cfg.clone()));
-        assert_eq!(load_with_marker(&cfg_path, true)?, ConfigLoadOutcome::Loaded(cfg));
+        assert_eq!(
+            load_with_marker(&cfg_path, true)?,
+            ConfigLoadOutcome::Loaded(cfg)
+        );
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())
