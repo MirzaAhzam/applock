@@ -12,6 +12,13 @@ export struct AppEntry {
     mode-label: string,
 }
 
+export struct ActivityRow {
+    time: string,
+    kind: string,
+    target: string,
+    result: string,
+}
+
 export component ManagerWindow inherits Window {
     // Gate state
     in property <bool> unlocked: false;
@@ -26,7 +33,13 @@ export component ManagerWindow inherits Window {
     in-out property <int> active-tab: 0;
     in property <string> tab-apps-label: "Apps";
     in property <string> tab-security-label: "Security";
+    in property <string> tab-activity-label: "Activity";
     in property <string> tab-limits-label: "Honest limits";
+
+    // Activity tab
+    in property <[ActivityRow]> activity-rows: [];
+    in property <string> clear-log-label: "Clear log";
+    in property <string> empty-log-label: "No activity recorded yet.";
 
     // Apps tab
     in property <[AppEntry]> apps: [];
@@ -70,6 +83,8 @@ export component ManagerWindow inherits Window {
     callback change-pin-submitted(string, string, string);
     callback toggle-language();
     callback toggle-theme();
+    callback refresh-activity();
+    callback clear-activity();
 
     title: root.window-title;
     min-width: 680px;
@@ -221,7 +236,8 @@ export component ManagerWindow inherits Window {
                 for nav in [
                     { idx: 0, label: root.tab-apps-label },
                     { idx: 1, label: root.tab-security-label },
-                    { idx: 2, label: root.tab-limits-label },
+                    { idx: 2, label: root.tab-activity-label },
+                    { idx: 3, label: root.tab-limits-label },
                 ]: Rectangle {
                     height: 36px;
                     border-radius: Tokens.radius-control;
@@ -242,6 +258,9 @@ export component ManagerWindow inherits Window {
                     nav-touch := TouchArea {
                         clicked => {
                             root.active-tab = nav.idx;
+                            if (nav.idx == 2) {
+                                root.refresh-activity();
+                            }
                         }
                     }
 
@@ -719,8 +738,122 @@ export component ManagerWindow inherits Window {
                 }
             }
 
-            // Tab 2: Honest limits
+            // Tab 2: Activity
             if root.active-tab == 2: VerticalLayout {
+                padding: Tokens.space-lg;
+                spacing: Tokens.space-md;
+                alignment: start;
+
+                HorizontalLayout {
+                    spacing: Tokens.space-sm;
+
+                    Text {
+                        text: root.tab-activity-label;
+                        color: Tokens.text;
+                        font-size: Tokens.font-title;
+                        font-weight: 600;
+                        horizontal-stretch: 1;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+
+                    Rectangle {
+                        width: 110px;
+                        height: 32px;
+                        border-radius: Tokens.radius-control;
+                        background: clear-log-touch.pressed ? Tokens.border : Tokens.surface;
+                        border-color: Tokens.border;
+                        border-width: 1px;
+                        accessible-role: button;
+                        accessible-label: root.clear-log-label;
+
+                        clear-log-touch := TouchArea {
+                            clicked => {
+                                root.clear-activity();
+                            }
+                        }
+
+                        Text {
+                            text: root.clear-log-label;
+                            color: Tokens.danger;
+                            font-size: Tokens.font-caption;
+                            font-weight: 600;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                if root.activity-rows.length == 0: Rectangle {
+                    height: 56px;
+                    background: Tokens.surface;
+                    border-color: Tokens.border;
+                    border-width: 1px;
+                    border-radius: Tokens.radius-control;
+
+                    Text {
+                        x: Tokens.space-md;
+                        width: parent.width - Tokens.space-md * 2;
+                        height: 100%;
+                        text: root.empty-log-label;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
+                Flickable {
+                    vertical-stretch: 1;
+                    viewport-height: act-col.preferred-height;
+
+                    act-col := VerticalLayout {
+                        width: parent.width;
+                        spacing: Tokens.space-xs;
+                        alignment: start;
+
+                        for row in root.activity-rows: Rectangle {
+                            height: 40px;
+                            background: Tokens.surface;
+                            border-color: Tokens.border;
+                            border-width: 1px;
+                            border-radius: Tokens.radius-control;
+
+                            HorizontalLayout {
+                                padding-left: Tokens.space-md;
+                                padding-right: Tokens.space-md;
+                                spacing: Tokens.space-sm;
+
+                                Text {
+                                    text: row.time;
+                                    color: Tokens.text-muted;
+                                    font-size: Tokens.font-caption;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: row.kind + ": " + row.target;
+                                    color: Tokens.text;
+                                    font-size: Tokens.font-body;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+
+                                Text {
+                                    text: row.result;
+                                    color: row.result == "denied" ? Tokens.danger : Tokens.accent;
+                                    font-size: Tokens.font-caption;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Tab 3: Honest limits
+            if root.active-tab == 3: VerticalLayout {
                 padding: Tokens.space-lg;
                 spacing: Tokens.space-md;
                 alignment: start;
