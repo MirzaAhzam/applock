@@ -17,9 +17,9 @@ use windows_sys::Win32::Security::Authorization::{
 use windows_sys::Win32::Security::{
     AclSizeInformation, CreateWellKnownSid, EqualSid, GetAce, GetAclInformation,
     GetSecurityDescriptorControl, GetSecurityDescriptorDacl, WinBuiltinAdministratorsSid,
-    WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACCESS_ALLOWED_ACE_TYPE, ACL, ACL_SIZE_INFORMATION,
-    DACL_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-    SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR_CONTROL, SE_DACL_PROTECTED,
+    WinLocalSystemSid, ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, DACL_SECURITY_INFORMATION,
+    PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES,
+    SECURITY_DESCRIPTOR_CONTROL, SE_DACL_PROTECTED,
 };
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
@@ -237,7 +237,7 @@ unsafe fn check_sd_dacl_system_admin_only(
             context: "GetSecurityDescriptorControl",
         });
     }
-    if (u32::from(control) & SE_DACL_PROTECTED) == 0 {
+    if (control & SE_DACL_PROTECTED) == 0 {
         return Ok(false);
     }
 
@@ -272,12 +272,14 @@ unsafe fn check_sd_dacl_system_admin_only(
             return Ok(false);
         }
         let ace = &*(ace_ptr.cast::<ACCESS_ALLOWED_ACE>());
-        if u32::from(ace.Header.AceType) != ACCESS_ALLOWED_ACE_TYPE {
+        if ace.Header.AceType != 0 {
             return Ok(false);
         }
-        let sid_ptr = (&raw const ace.SidStart).cast::<std::ffi::c_void>();
-        let is_sys = EqualSid(sid_ptr, system_sid.as_ptr().cast()) != 0;
-        let is_adm = EqualSid(sid_ptr, admin_sid.as_ptr().cast()) != 0;
+        let sid_ptr = (&raw const ace.SidStart)
+            .cast::<std::ffi::c_void>()
+            .cast_mut();
+        let is_sys = EqualSid(sid_ptr, system_sid.as_ptr().cast_mut().cast()) != 0;
+        let is_adm = EqualSid(sid_ptr, admin_sid.as_ptr().cast_mut().cast()) != 0;
         if !is_sys && !is_adm {
             return Ok(false);
         }
