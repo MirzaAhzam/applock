@@ -22,6 +22,7 @@ use applock_sys::process::{
     launch_hidden_command, resume_process, show_process_windows, suspend_process,
     terminate_process, wait_process_exit,
 };
+use applock_sys::scm::{run_as_windows_service, ScmOutcome};
 use applock_sys::security::{
     clear_install_marker, has_install_marker, set_install_marker, verify_and_repair_dir_acl,
 };
@@ -49,7 +50,17 @@ fn main() -> ExitCode {
     if args.iter().any(|a| a == "--reset-tamper") {
         return run_reset_tamper();
     }
-    run_service(&args)
+    let service_args = args.clone();
+    match run_as_windows_service("AppLockService", move || {
+        let _ = run_service(&service_args);
+    }) {
+        Ok(ScmOutcome::ServiceCompleted) => ExitCode::SUCCESS,
+        Ok(ScmOutcome::NotStartedByScm) => run_service(&args),
+        Err(e) => {
+            eprintln!("SCM dispatcher failed: {e}");
+            ExitCode::FAILURE
+        }
+    }
 }
 
 fn run_reset_tamper() -> ExitCode {

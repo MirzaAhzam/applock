@@ -8,6 +8,7 @@ pub mod etw;
 pub mod lock_dialog;
 pub mod pipe;
 pub mod process;
+pub mod scm;
 pub mod security;
 pub mod window;
 pub mod winevent;
