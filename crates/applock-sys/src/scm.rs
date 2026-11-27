@@ -89,8 +89,7 @@ where
 unsafe extern "system" fn service_main(_argc: u32, _argv: *mut *mut u16) {
     let svc_name = SERVICE_NAME
         .lock()
-        .map(|g| g.clone())
-        .unwrap_or_else(|_| "AppLockService".to_string());
+        .map_or_else(|_| "AppLockService".to_string(), |g| g.clone());
     let name_w = to_wide_null(&svc_name);
 
     let handle: SERVICE_STATUS_HANDLE =
@@ -166,3 +165,4 @@ mod tests {
         Ok(())
     }
 }
+
