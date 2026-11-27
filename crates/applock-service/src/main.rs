@@ -356,8 +356,12 @@ fn handle_set_app_mode(state: &Arc<Mutex<ServiceState>>, app_id: &str, grace_sec
     guard.activity.append(&ActivityEntry {
         timestamp_unix_secs: now_unix_secs(),
         kind: "config".to_string(),
-        target: app_id.trim().to_ascii_lowercase(),
-        result: if locked { "locked" } else { "unlocked" }.to_string(),
+        target: normalized,
+        result: if grace_seconds == 0 {
+            "always".to_string()
+        } else {
+            format!("grace_{grace_seconds}s")
+        },
     });
     let cfg_clone = guard.config.clone();
     let path_clone = guard.config_path.clone();
