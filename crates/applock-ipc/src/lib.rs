@@ -43,6 +43,111 @@ impl fmt::Display for IpcError {
 
 impl std::error::Error for IpcError {}
 
+/// Physical screen bounding rectangle of a target application window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowRect {
+    /// Left coordinate in physical screen pixels.
+    pub x: i32,
+    /// Top coordinate in physical screen pixels.
+    pub y: i32,
+    /// Width in physical screen pixels.
+    pub width: i32,
+    /// Height in physical screen pixels.
+    pub height: i32,
+}
+
+/// Visibility state of the tracked target application window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowVisibility {
+    /// Target window is visible and in the foreground.
+    Visible,
+    /// Target window was minimized.
+    Minimized,
+    /// Target window was hidden or closed.
+    Hidden,
+    /// Another window took foreground focus.
+    Unfocused,
+}
+
+/// Dynamic window-bounds and visibility update sent from `applock-agent` to `applock-lockui`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OverlayUpdate {
+    /// Per-message random nonce.
+    pub nonce: [u8; 16],
+    /// Current target window bounding rectangle.
+    pub rect: WindowRect,
+    /// Current target window visibility state.
+    pub visibility: WindowVisibility,
+}
+
+impl OverlayUpdate {
+    /// Encodes this overlay update into a bounded binary frame.
+    ///
+    /// # Errors
+    /// Returns `IpcError::InvalidLength` if the encoded frame exceeds `MAX_MESSAGE_BYTES`.
+    pub fn encode(&self) -> Result<Vec<u8>, IpcError> {
+        let mut out = Vec::with_capacity(HEADER_LEN + 17);
+        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(&PROTOCOL_VERSION.to_le_bytes());
+        out.push(10);
+        out.extend_from_slice(&self.nonce);
+        out.extend_from_slice(&self.rect.x.to_le_bytes());
+        out.extend_from_slice(&self.rect.y.to_le_bytes());
+        out.extend_from_slice(&self.rect.width.to_le_bytes());
+        out.extend_from_slice(&self.rect.height.to_le_bytes());
+        let vis_tag = match self.visibility {
+            WindowVisibility::Visible => 0_u8,
+            WindowVisibility::Minimized => 1_u8,
+            WindowVisibility::Hidden => 2_u8,
+            WindowVisibility::Unfocused => 3_u8,
+        };
+        out.push(vis_tag);
+        if out.len() > MAX_MESSAGE_BYTES {
+            return Err(IpcError::InvalidLength);
+        }
+        Ok(out)
+    }
+
+    /// Decodes an `OverlayUpdate` with strict header, payload length, and trailing-byte checks.
+    ///
+    /// # Errors
+    /// Returns `IpcError` if the frame is malformed, oversized, or has an unknown kind/tag.
+    pub fn decode(bytes: &[u8]) -> Result<Self, IpcError> {
+        let (kind, nonce, rest) = parse_header(bytes)?;
+        if kind != 10 {
+            return Err(IpcError::UnknownKind(kind));
+        }
+        if rest.len() != 17 {
+            return Err(if rest.len() > 17 {
+                IpcError::TrailingBytes
+            } else {
+                IpcError::MalformedPayload
+            });
+        }
+        let x = i32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]);
+        let y = i32::from_le_bytes([rest[4], rest[5], rest[6], rest[7]]);
+        let width = i32::from_le_bytes([rest[8], rest[9], rest[10], rest[11]]);
+        let height = i32::from_le_bytes([rest[12], rest[13], rest[14], rest[15]]);
+        let visibility = match rest[16] {
+            0 => WindowVisibility::Visible,
+            1 => WindowVisibility::Minimized,
+            2 => WindowVisibility::Hidden,
+            3 => WindowVisibility::Unfocused,
+            _ => return Err(IpcError::MalformedPayload),
+        };
+        Ok(Self {
+            nonce,
+            rect: WindowRect {
+                x,
+                y,
+                width,
+                height,
+            },
+            visibility,
+        })
+    }
+}
+
 /// Request sent from `applock-agent`, `applock-lockui`, or `applock-manager` to `applock-service`.
 #[derive(Clone, PartialEq, Eq)]
 pub enum Request {
@@ -577,6 +682,47 @@ mod tests {
 
         let oversized = vec![0_u8; MAX_MESSAGE_BYTES + 1];
         assert_eq!(Request::decode(&oversized), Err(IpcError::InvalidLength));
+        Ok(())
+    }
+
+    #[test]
+    fn round_trip_overlay_update_and_reject_invalid() -> Result<(), IpcError> {
+        let nonce = [5_u8; 16];
+        for vis in [
+            WindowVisibility::Visible,
+            WindowVisibility::Minimized,
+            WindowVisibility::Hidden,
+            WindowVisibility::Unfocused,
+        ] {
+            let msg = OverlayUpdate {
+                nonce,
+                rect: WindowRect {
+                    x: -100,
+                    y: 250,
+                    width: 1280,
+                    height: 720,
+                },
+                visibility: vis,
+            };
+            let enc = msg.encode()?;
+            assert_eq!(OverlayUpdate::decode(&enc)?, msg);
+        }
+
+        let mut bad = OverlayUpdate {
+            nonce,
+            rect: WindowRect {
+                x: 0,
+                y: 0,
+                width: 400,
+                height: 300,
+            },
+            visibility: WindowVisibility::Visible,
+        }
+        .encode()?;
+        if let Some(last) = bad.last_mut() {
+            *last = 99;
+        }
+        assert_eq!(OverlayUpdate::decode(&bad), Err(IpcError::MalformedPayload));
         Ok(())
     }
 }

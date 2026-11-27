@@ -9,11 +9,15 @@
 use std::cell::Cell;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use applock_i18n::{Language, LockStrings};
-use applock_ipc::{Request, Response};
+use applock_ipc::{OverlayUpdate, Request, Response, WindowVisibility};
 use applock_sys::crypto::fill_random;
-use applock_sys::pipe::{PipeClient, PIPE_NAME};
+use applock_sys::pipe::{PipeClient, PipeServer, PIPE_NAME};
+use applock_sys::window::{configure_lock_overlay_hwnd, find_own_window_hwnd, WindowBounds};
 
 #[allow(
     clippy::all,
@@ -37,6 +41,8 @@ struct CliArgs {
     pid: u32,
     lang: Language,
     dark: bool,
+    bounds: Option<WindowBounds>,
+    overlay_pipe: Option<String>,
 }
 
 impl Default for CliArgs {
@@ -45,7 +51,9 @@ impl Default for CliArgs {
             app_name: "App".to_string(),
             pid: 0,
             lang: Language::En,
-            dark: false,
+            dark: true,
+            bounds: None,
+            overlay_pipe: None,
         }
     }
 }
@@ -55,6 +63,10 @@ where
     I: IntoIterator<Item = String>,
 {
     let mut args = CliArgs::default();
+    let mut x: Option<i32> = None;
+    let mut y: Option<i32> = None;
+    let mut width: Option<i32> = None;
+    let mut height: Option<i32> = None;
     let mut it = iter.into_iter();
     while let Some(flag) = it.next() {
         match flag.as_str() {
@@ -84,7 +96,47 @@ where
             "--dark" => {
                 args.dark = true;
             }
+            "--light" => {
+                args.dark = false;
+            }
+            "--x" => {
+                if let Some(val) = it.next() {
+                    x = val.parse::<i32>().ok();
+                }
+            }
+            "--y" => {
+                if let Some(val) = it.next() {
+                    y = val.parse::<i32>().ok();
+                }
+            }
+            "--width" => {
+                if let Some(val) = it.next() {
+                    width = val.parse::<i32>().ok();
+                }
+            }
+            "--height" => {
+                if let Some(val) = it.next() {
+                    height = val.parse::<i32>().ok();
+                }
+            }
+            "--overlay-pipe" => {
+                if let Some(val) = it.next() {
+                    if !val.trim().is_empty() {
+                        args.overlay_pipe = Some(val);
+                    }
+                }
+            }
             _ => {}
+        }
+    }
+    if let (Some(left), Some(top), Some(w), Some(h)) = (x, y, width, height) {
+        if w > 0 && h > 0 {
+            args.bounds = Some(WindowBounds {
+                left,
+                top,
+                width: w,
+                height: h,
+            });
         }
     }
     args
@@ -153,6 +205,85 @@ fn main() -> ExitCode {
     let tokens = window.global::<Tokens>();
     tokens.set_dark_mode(args.dark);
     tokens.set_rtl(args.lang.is_rtl());
+
+    if let Some(b) = args.bounds {
+        window
+            .window()
+            .set_position(slint::PhysicalPosition::new(b.left, b.top));
+        window.window().set_size(slint::PhysicalSize::new(
+            u32::try_from(b.width).unwrap_or(420),
+            u32::try_from(b.height).unwrap_or(290),
+        ));
+    }
+
+    let current_bounds = Arc::new(Mutex::new(args.bounds.unwrap_or(WindowBounds {
+        left: 100,
+        top: 100,
+        width: 420,
+        height: 290,
+    })));
+
+    if let Some(b) = args.bounds {
+        slint::Timer::single_shot(Duration::from_millis(15), move || {
+            if let Some(hwnd) = find_own_window_hwnd() {
+                configure_lock_overlay_hwnd(hwnd, b, true);
+            }
+        });
+    }
+
+    if let Some(pipe_name) = args.overlay_pipe.clone() {
+        let weak_win = window.as_weak();
+        let bounds_state = Arc::clone(&current_bounds);
+        thread::spawn(move || {
+            let Ok(server) = PipeServer::create(&pipe_name) else {
+                return;
+            };
+            loop {
+                if server.accept().is_err() {
+                    continue;
+                }
+                if let Ok(frame) = server.read_frame() {
+                    if let Ok(update) = OverlayUpdate::decode(&frame) {
+                        let visible = update.visibility == WindowVisibility::Visible;
+                        let new_bounds = WindowBounds {
+                            left: update.rect.x,
+                            top: update.rect.y,
+                            width: update.rect.width,
+                            height: update.rect.height,
+                        };
+                        if visible && new_bounds.width > 0 && new_bounds.height > 0 {
+                            if let Ok(mut g) = bounds_state.lock() {
+                                *g = new_bounds;
+                            }
+                        }
+                        let effective_bounds = bounds_state
+                            .lock()
+                            .map(|g| *g)
+                            .unwrap_or(new_bounds);
+                        let weak_ui = weak_win.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(w) = weak_ui.upgrade() {
+                                if visible && effective_bounds.width > 0 && effective_bounds.height > 0 {
+                                    w.window().set_position(slint::PhysicalPosition::new(
+                                        effective_bounds.left,
+                                        effective_bounds.top,
+                                    ));
+                                    w.window().set_size(slint::PhysicalSize::new(
+                                        u32::try_from(effective_bounds.width).unwrap_or(420),
+                                        u32::try_from(effective_bounds.height).unwrap_or(290),
+                                    ));
+                                }
+                                if let Some(hwnd) = find_own_window_hwnd() {
+                                    configure_lock_overlay_hwnd(hwnd, effective_bounds, visible);
+                                }
+                            }
+                        });
+                    }
+                }
+                server.disconnect();
+            }
+        });
+    }
 
     window.set_app_name(args.app_name.clone().into());
     window.set_prompt_instruction(strings.prompt_instruction.clone().into());
@@ -240,11 +371,34 @@ mod tests {
             "--lang".to_string(),
             "ur".to_string(),
             "--dark".to_string(),
+            "--x".to_string(),
+            "120".to_string(),
+            "--y".to_string(),
+            "80".to_string(),
+            "--width".to_string(),
+            "900".to_string(),
+            "--height".to_string(),
+            "600".to_string(),
+            "--overlay-pipe".to_string(),
+            r"\\.\pipe\AppLockOverlay_1".to_string(),
         ]);
         assert_eq!(parsed.app_name, "WhatsApp");
         assert_eq!(parsed.pid, 4242);
         assert_eq!(parsed.lang, Language::Ur);
         assert!(parsed.dark);
+        assert_eq!(
+            parsed.bounds,
+            Some(WindowBounds {
+                left: 120,
+                top: 80,
+                width: 900,
+                height: 600,
+            })
+        );
+        assert_eq!(
+            parsed.overlay_pipe.as_deref(),
+            Some(r"\\.\pipe\AppLockOverlay_1")
+        );
     }
 
     #[test]
@@ -254,10 +408,14 @@ mod tests {
             "   ".to_string(),
             "--pid".to_string(),
             "not-a-number".to_string(),
+            "--light".to_string(),
+            "--width".to_string(),
+            "-10".to_string(),
         ]);
         assert_eq!(parsed.app_name, "App");
         assert_eq!(parsed.pid, 0);
         assert_eq!(parsed.lang, Language::En);
         assert!(!parsed.dark);
+        assert!(parsed.bounds.is_none());
     }
 }
