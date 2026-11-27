@@ -2,7 +2,11 @@ import { Tokens } from "../tokens.slint";
 export { Tokens }
 
 export struct AppEntry {
+    id: string,
     name: string,
+    path: string,
+    icon: image,
+    has-icon: bool,
     locked: bool,
 }
 
@@ -29,7 +33,10 @@ export component ManagerWindow inherits Window {
     in property <string> add-placeholder: "Add executable (for example: whatsapp.exe)";
     in-out property <string> add-input: "";
     in property <string> add-button-label: "Lock app";
-    in property <string> empty-apps-label: "No apps locked yet. Choose an app from the list.";
+    in property <string> browse-button-label: "Browse .exe";
+    in property <string> loading-apps-label: "Scanning installed apps...";
+    in property <bool> loading-apps: false;
+    in property <string> empty-apps-label: "No matching apps found.";
     in property <string> locked-label: "Locked";
     in property <string> unlocked-label: "Unlocked";
 
@@ -55,6 +62,7 @@ export component ManagerWindow inherits Window {
     callback gate-submitted(string);
     callback search-changed(string);
     callback add-app-submitted(string);
+    callback browse-exe-clicked();
     callback toggle-app(string, bool);
     callback change-pin-submitted(string, string, string);
     callback toggle-language();
@@ -259,41 +267,7 @@ export component ManagerWindow inherits Window {
                 spacing: Tokens.space-md;
                 alignment: start;
 
-                // Search bar
-                Rectangle {
-                    height: 36px;
-                    background: Tokens.surface;
-                    border-radius: Tokens.radius-control;
-                    border-width: search-input-box.has-focus ? Tokens.focus-ring : 1px;
-                    border-color: search-input-box.has-focus ? Tokens.accent : Tokens.border;
-
-                    search-input-box := TextInput {
-                        x: Tokens.space-sm;
-                        width: parent.width - Tokens.space-sm * 2;
-                        height: 100%;
-                        text <=> root.search-query;
-                        color: Tokens.text;
-                        font-size: Tokens.font-body;
-                        vertical-alignment: center;
-                        horizontal-alignment: Tokens.rtl ? right : left;
-                        edited => {
-                            root.search-changed(self.text);
-                        }
-                    }
-
-                    if root.search-query == "": Text {
-                        x: Tokens.space-sm;
-                        width: parent.width - Tokens.space-sm * 2;
-                        height: 100%;
-                        text: root.search-placeholder;
-                        color: Tokens.text-muted;
-                        font-size: Tokens.font-body;
-                        vertical-alignment: center;
-                        horizontal-alignment: Tokens.rtl ? right : left;
-                    }
-                }
-
-                // Add custom executable row
+                // Search bar + Browse .exe fallback
                 HorizontalLayout {
                     spacing: Tokens.space-sm;
 
@@ -301,28 +275,28 @@ export component ManagerWindow inherits Window {
                         height: 36px;
                         background: Tokens.surface;
                         border-radius: Tokens.radius-control;
-                        border-width: add-field.has-focus ? Tokens.focus-ring : 1px;
-                        border-color: add-field.has-focus ? Tokens.accent : Tokens.border;
+                        border-width: search-input-box.has-focus ? Tokens.focus-ring : 1px;
+                        border-color: search-input-box.has-focus ? Tokens.accent : Tokens.border;
 
-                        add-field := TextInput {
+                        search-input-box := TextInput {
                             x: Tokens.space-sm;
                             width: parent.width - Tokens.space-sm * 2;
                             height: 100%;
-                            text <=> root.add-input;
+                            text <=> root.search-query;
                             color: Tokens.text;
                             font-size: Tokens.font-body;
                             vertical-alignment: center;
                             horizontal-alignment: Tokens.rtl ? right : left;
-                            accepted => {
-                                root.add-app-submitted(root.add-input);
+                            edited => {
+                                root.search-changed(self.text);
                             }
                         }
 
-                        if root.add-input == "": Text {
+                        if root.search-query == "": Text {
                             x: Tokens.space-sm;
                             width: parent.width - Tokens.space-sm * 2;
                             height: 100%;
-                            text: root.add-placeholder;
+                            text: root.search-placeholder;
                             color: Tokens.text-muted;
                             font-size: Tokens.font-body;
                             vertical-alignment: center;
@@ -331,21 +305,35 @@ export component ManagerWindow inherits Window {
                     }
 
                     Rectangle {
-                        width: 110px;
+                        width: 120px;
                         height: 36px;
                         border-radius: Tokens.radius-control;
-                        background: add-btn-touch.pressed ? Tokens.text : Tokens.accent;
+                        background: browse-btn-touch.pressed ? Tokens.border : (browse-btn-touch.has-hover ? Tokens.bg : Tokens.surface);
+                        border-color: browse-btn-focus.has-focus ? Tokens.accent : Tokens.border;
+                        border-width: browse-btn-focus.has-focus ? Tokens.focus-ring : 1px;
+                        accessible-role: button;
+                        accessible-label: root.browse-button-label;
 
-                        add-btn-touch := TouchArea {
+                        browse-btn-focus := FocusScope {
+                            key-pressed(event) => {
+                                if (event.text == Key.Return || event.text == " ") {
+                                    root.browse-exe-clicked();
+                                    accept
+                                }
+                                reject
+                            }
+                        }
+
+                        browse-btn-touch := TouchArea {
                             clicked => {
-                                root.add-app-submitted(root.add-input);
+                                root.browse-exe-clicked();
                             }
                         }
 
                         Text {
-                            text: root.add-button-label;
-                            color: Tokens.on-accent;
-                            font-size: Tokens.font-body;
+                            text: root.browse-button-label;
+                            color: Tokens.text;
+                            font-size: Tokens.font-caption;
                             font-weight: 600;
                             horizontal-alignment: center;
                             vertical-alignment: center;
@@ -353,8 +341,27 @@ export component ManagerWindow inherits Window {
                     }
                 }
 
+                if root.loading-apps: Rectangle {
+                    height: 44px;
+                    background: Tokens.surface;
+                    border-color: Tokens.border;
+                    border-width: 1px;
+                    border-radius: Tokens.radius-control;
+
+                    Text {
+                        x: Tokens.space-md;
+                        width: parent.width - Tokens.space-md * 2;
+                        height: 100%;
+                        text: root.loading-apps-label;
+                        color: Tokens.text-muted;
+                        font-size: Tokens.font-body;
+                        vertical-alignment: center;
+                        horizontal-alignment: Tokens.rtl ? right : left;
+                    }
+                }
+
                 // Empty state
-                if root.apps.length == 0: Rectangle {
+                if !root.loading-apps && root.apps.length == 0: Rectangle {
                     height: 64px;
                     background: Tokens.surface;
                     border-color: Tokens.border;
@@ -373,49 +380,116 @@ export component ManagerWindow inherits Window {
                     }
                 }
 
-                // App rows
-                for entry in root.apps: Rectangle {
-                    height: 44px;
-                    background: Tokens.surface;
-                    border-color: Tokens.border;
-                    border-width: 1px;
-                    border-radius: Tokens.radius-control;
+                // Scrollable installed-apps list
+                Flickable {
+                    vertical-stretch: 1;
+                    viewport-height: apps-col.preferred-height;
 
-                    HorizontalLayout {
-                        padding-left: Tokens.space-md;
-                        padding-right: Tokens.space-md;
-                        spacing: Tokens.space-sm;
+                    apps-col := VerticalLayout {
+                        width: parent.width;
+                        spacing: Tokens.space-xs;
+                        alignment: start;
 
-                        Text {
-                            text: entry.name;
-                            color: Tokens.text;
-                            font-size: Tokens.font-body;
-                            vertical-alignment: center;
-                            horizontal-alignment: Tokens.rtl ? right : left;
-                        }
-
-                        Rectangle {
-                            width: 96px;
-                            height: 28px;
-                            y: 8px;
-                            border-radius: Tokens.radius-control;
-                            background: entry.locked ? Tokens.accent : Tokens.bg;
+                        for entry in root.apps: Rectangle {
+                            height: 56px;
+                            background: Tokens.surface;
                             border-color: Tokens.border;
-                            border-width: entry.locked ? 0px : 1px;
+                            border-width: 1px;
+                            border-radius: Tokens.radius-control;
 
-                            TouchArea {
-                                clicked => {
-                                    root.toggle-app(entry.name, !entry.locked);
+                            HorizontalLayout {
+                                padding-left: Tokens.space-md;
+                                padding-right: Tokens.space-md;
+                                spacing: Tokens.space-sm;
+
+                                // Real app icon or fallback badge
+                                Rectangle {
+                                    width: 32px;
+                                    height: 32px;
+                                    y: 12px;
+                                    border-radius: Tokens.radius-control;
+                                    background: Tokens.bg;
+                                    border-color: Tokens.border;
+                                    border-width: entry.has-icon ? 0px : 1px;
+
+                                    if entry.has-icon: Image {
+                                        width: 32px;
+                                        height: 32px;
+                                        source: entry.icon;
+                                        image-fit: contain;
+                                    }
+
+                                    if !entry.has-icon: Text {
+                                        text: "A";
+                                        color: Tokens.text-muted;
+                                        font-size: Tokens.font-body;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
                                 }
-                            }
 
-                            Text {
-                                text: entry.locked ? root.locked-label : root.unlocked-label;
-                                color: entry.locked ? Tokens.on-accent : Tokens.text;
-                                font-size: Tokens.font-caption;
-                                font-weight: 600;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
+                                // Display name + exe path / AUMID
+                                VerticalLayout {
+                                    horizontal-stretch: 1;
+                                    alignment: center;
+                                    spacing: 2px;
+
+                                    Text {
+                                        text: entry.name;
+                                        color: Tokens.text;
+                                        font-size: Tokens.font-body;
+                                        font-weight: 600;
+                                        overflow: elide;
+                                        horizontal-alignment: Tokens.rtl ? right : left;
+                                    }
+
+                                    Text {
+                                        text: entry.path;
+                                        color: Tokens.text-muted;
+                                        font-size: Tokens.font-caption;
+                                        overflow: elide;
+                                        horizontal-alignment: Tokens.rtl ? right : left;
+                                    }
+                                }
+
+                                // Instant Lock / Unlock toggle
+                                Rectangle {
+                                    width: 96px;
+                                    height: 30px;
+                                    y: 13px;
+                                    border-radius: Tokens.radius-control;
+                                    background: entry.locked ? Tokens.accent : Tokens.bg;
+                                    border-color: toggle-focus.has-focus ? Tokens.text : Tokens.border;
+                                    border-width: toggle-focus.has-focus ? Tokens.focus-ring : (entry.locked ? 0px : 1px);
+                                    accessible-role: button;
+                                    accessible-label: entry.name;
+
+                                    toggle-focus := FocusScope {
+                                        key-pressed(event) => {
+                                            if (event.text == Key.Return || event.text == " ") {
+                                                root.toggle-app(entry.id, !entry.locked);
+                                                accept
+                                            }
+                                            reject
+                                        }
+                                    }
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.toggle-app(entry.id, !entry.locked);
+                                        }
+                                    }
+
+                                    Text {
+                                        text: entry.locked ? root.locked-label : root.unlocked-label;
+                                        color: entry.locked ? Tokens.on-accent : Tokens.text;
+                                        font-size: Tokens.font-caption;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
                             }
                         }
                     }
