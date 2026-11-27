@@ -100,142 +100,151 @@ fn main() -> ExitCode {
     let self_pid = std::process::id();
 
     if let Err(e) = run_window_watcher(move |ev| {
-        if ev.pid == 0 || ev.pid == self_pid {
-            return;
-        }
-        let exe_name = Path::new(&ev.image_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("<unknown>");
-
-        match ev.kind {
-            WindowEventKind::LocationChanged => {
-                let maybe_update = active_overlays.lock().ok().and_then(|mut map| {
-                    let entry = map.get_mut(&ev.hwnd)?;
-                    let bounds = ev.bounds.or_else(|| get_window_bounds(ev.hwnd))?;
-                    let rect = to_window_rect(bounds);
-                    entry.last_rect = rect;
-                    Some((entry.pipe_name.clone(), rect))
-                });
-                if let Some((pipe_name, rect)) = maybe_update {
-                    send_overlay_update(&pipe_name, rect, WindowVisibility::Visible);
-                }
-            }
-            WindowEventKind::Minimized | WindowEventKind::Hidden => {
-                let vis = if ev.kind == WindowEventKind::Minimized {
-                    WindowVisibility::Minimized
-                } else {
-                    WindowVisibility::Hidden
-                };
-                let maybe_pipe = active_overlays.lock().ok().and_then(|map| {
-                    map.get(&ev.hwnd)
-                        .map(|e| (e.pipe_name.clone(), e.last_rect))
-                });
-                if let Some((pipe_name, rect)) = maybe_pipe {
-                    send_overlay_update(&pipe_name, rect, vis);
-                }
-            }
-            WindowEventKind::Foreground => {
-                let is_lockui = exe_name.eq_ignore_ascii_case("applock-lockui.exe");
-                if !is_lockui {
-                    // Hide any active overlay belonging to a different window that lost focus.
-                    let unfocused: Vec<(String, WindowRect)> = active_overlays
-                        .lock()
-                        .map(|map| {
-                            map.iter()
-                                .filter(|(&h, _)| h != ev.hwnd)
-                                .map(|(_, e)| (e.pipe_name.clone(), e.last_rect))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    for (pipe_name, rect) in unfocused {
-                        send_overlay_update(&pipe_name, rect, WindowVisibility::Unfocused);
-                    }
-                }
-
-                // If this foreground window already has an active overlay, show/reposition it.
-                let existing = active_overlays.lock().ok().and_then(|mut map| {
-                    let entry = map.get_mut(&ev.hwnd)?;
-                    if let Some(bounds) = ev.bounds.or_else(|| get_window_bounds(ev.hwnd)) {
-                        entry.last_rect = to_window_rect(bounds);
-                    }
-                    Some((entry.pipe_name.clone(), entry.last_rect))
-                });
-                if let Some((pipe_name, rect)) = existing {
-                    send_overlay_update(&pipe_name, rect, WindowVisibility::Visible);
-                    return;
-                }
-
-                if should_skip_exe(exe_name) {
-                    return;
-                }
-                if query_service_locked(exe_name) != LockDecision::Locked {
-                    return;
-                }
-
-                let bounds =
-                    ev.bounds
-                        .or_else(|| get_window_bounds(ev.hwnd))
-                        .unwrap_or(WindowBounds {
-                            left: 100,
-                            top: 100,
-                            width: 480,
-                            height: 360,
-                        });
-                let rect = to_window_rect(bounds);
-                let pipe_name = make_overlay_pipe_name(ev.pid);
-
-                {
-                    let Ok(mut guard) = active_overlays.lock() else {
-                        return;
-                    };
-                    if guard.values().any(|o| o.pid == ev.pid) {
-                        return;
-                    }
-                    guard.insert(
-                        ev.hwnd,
-                        ActiveOverlay {
-                            pid: ev.pid,
-                            pipe_name: pipe_name.clone(),
-                            last_rect: rect,
-                        },
-                    );
-                }
-
-                // Freeze target process while keeping its window bounds tracked by lockui.
-                let _ = suspend_process(ev.pid);
-
-                let overlays_clone = Arc::clone(&active_overlays);
-                let display_name = exe_name
-                    .strip_suffix(".exe")
-                    .unwrap_or(exe_name)
-                    .to_string();
-                let hwnd = ev.hwnd;
-                let pid = ev.pid;
-
-                let spawned = thread::Builder::new()
-                    .name("applock-prompt".to_string())
-                    .spawn(move || {
-                        handle_locked_process(pid, &display_name, rect, &pipe_name);
-                        if let Ok(mut guard) = overlays_clone.lock() {
-                            guard.remove(&hwnd);
-                        }
-                    });
-
-                if spawned.is_err() {
-                    let _ = terminate_process(pid);
-                    if let Ok(mut guard) = active_overlays.lock() {
-                        guard.remove(&hwnd);
-                    }
-                }
-            }
-        }
+        handle_window_event(&active_overlays, self_pid, ev);
     }) {
         eprintln!("SetWinEventHook failed: {e}");
         return ExitCode::FAILURE;
     }
 
     ExitCode::SUCCESS
+}
+
+fn handle_window_event(
+    active_overlays: &Arc<Mutex<HashMap<isize, ActiveOverlay>>>,
+    self_pid: u32,
+    ev: applock_sys::winevent::WindowEvent,
+) {
+    if ev.pid == 0 || ev.pid == self_pid {
+        return;
+    }
+    let exe_name = Path::new(&ev.image_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("<unknown>");
+
+    match ev.kind {
+        WindowEventKind::LocationChanged => {
+            let maybe_update = active_overlays.lock().ok().and_then(|mut map| {
+                let entry = map.get_mut(&ev.hwnd)?;
+                let bounds = ev.bounds.or_else(|| get_window_bounds(ev.hwnd))?;
+                let rect = to_window_rect(bounds);
+                entry.last_rect = rect;
+                Some((entry.pipe_name.clone(), rect))
+            });
+            if let Some((pipe_name, rect)) = maybe_update {
+                send_overlay_update(&pipe_name, rect, WindowVisibility::Visible);
+            }
+        }
+        WindowEventKind::Minimized | WindowEventKind::Hidden => {
+            let vis = if ev.kind == WindowEventKind::Minimized {
+                WindowVisibility::Minimized
+            } else {
+                WindowVisibility::Hidden
+            };
+            let maybe_pipe = active_overlays.lock().ok().and_then(|map| {
+                map.get(&ev.hwnd)
+                    .map(|e| (e.pipe_name.clone(), e.last_rect))
+            });
+            if let Some((pipe_name, rect)) = maybe_pipe {
+                send_overlay_update(&pipe_name, rect, vis);
+            }
+        }
+        WindowEventKind::Foreground => {
+            handle_foreground_event(active_overlays, &ev, exe_name);
+        }
+    }
+}
+
+fn handle_foreground_event(
+    active_overlays: &Arc<Mutex<HashMap<isize, ActiveOverlay>>>,
+    ev: &applock_sys::winevent::WindowEvent,
+    exe_name: &str,
+) {
+    if !exe_name.eq_ignore_ascii_case("applock-lockui.exe") {
+        let unfocused: Vec<(String, WindowRect)> = active_overlays
+            .lock()
+            .map(|map| {
+                map.iter()
+                    .filter(|(&h, _)| h != ev.hwnd)
+                    .map(|(_, e)| (e.pipe_name.clone(), e.last_rect))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (pipe_name, rect) in unfocused {
+            send_overlay_update(&pipe_name, rect, WindowVisibility::Unfocused);
+        }
+    }
+
+    let existing = active_overlays.lock().ok().and_then(|mut map| {
+        let entry = map.get_mut(&ev.hwnd)?;
+        if let Some(bounds) = ev.bounds.or_else(|| get_window_bounds(ev.hwnd)) {
+            entry.last_rect = to_window_rect(bounds);
+        }
+        Some((entry.pipe_name.clone(), entry.last_rect))
+    });
+    if let Some((pipe_name, rect)) = existing {
+        send_overlay_update(&pipe_name, rect, WindowVisibility::Visible);
+        return;
+    }
+
+    if should_skip_exe(exe_name) || query_service_locked(exe_name) != LockDecision::Locked {
+        return;
+    }
+
+    let bounds = ev
+        .bounds
+        .or_else(|| get_window_bounds(ev.hwnd))
+        .unwrap_or(WindowBounds {
+            left: 100,
+            top: 100,
+            width: 480,
+            height: 360,
+        });
+    let rect = to_window_rect(bounds);
+    let pipe_name = make_overlay_pipe_name(ev.pid);
+
+    {
+        let Ok(mut guard) = active_overlays.lock() else {
+            return;
+        };
+        if guard.values().any(|o| o.pid == ev.pid) {
+            return;
+        }
+        guard.insert(
+            ev.hwnd,
+            ActiveOverlay {
+                pid: ev.pid,
+                pipe_name: pipe_name.clone(),
+                last_rect: rect,
+            },
+        );
+    }
+
+    let _ = suspend_process(ev.pid);
+
+    let overlays_clone = Arc::clone(active_overlays);
+    let display_name = exe_name
+        .strip_suffix(".exe")
+        .unwrap_or(exe_name)
+        .to_string();
+    let hwnd = ev.hwnd;
+    let pid = ev.pid;
+
+    let spawned = thread::Builder::new()
+        .name("applock-prompt".to_string())
+        .spawn(move || {
+            handle_locked_process(pid, &display_name, rect, &pipe_name);
+            if let Ok(mut guard) = overlays_clone.lock() {
+                guard.remove(&hwnd);
+            }
+        });
+
+    if spawned.is_err() {
+        let _ = terminate_process(pid);
+        if let Ok(mut guard) = active_overlays.lock() {
+            guard.remove(&hwnd);
+        }
+    }
 }
 
 fn handle_locked_process(pid: u32, display_name: &str, rect: WindowRect, pipe_name: &str) {
