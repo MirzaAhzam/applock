@@ -1,6 +1,11 @@
 //! Atomic DPAPI-encrypted configuration storage with last-known-good fallback (`FR-TAMP-04`).
+//!
+//! Security note: machine-scope DPAPI detects corruption or truncation only; the real
+//! protection against tampering by standard users is the `SYSTEM`/`Administrators`-only
+//! ACL on `%ProgramData%\AppLock` and `HKLM\SOFTWARE\AppLock`.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::Path;
 
 use applock_sys::crypto::{dpapi_protect_machine, dpapi_unprotect_machine};
@@ -11,6 +16,18 @@ use crate::CoreError;
 
 const CONFIG_MAGIC: &[u8; 4] = b"APCF";
 const CONFIG_VERSION: u16 = 1;
+const MAX_TAMPER_LOG_BYTES: u64 = 256 * 1024;
+
+/// Result of loading configuration with install-marker awareness (`FR-TAMP-04`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConfigLoadOutcome {
+    /// Primary `config.bin` loaded and passed DPAPI + structural validation.
+    Loaded(AppConfig),
+    /// Primary `config.bin` was missing or corrupt; valid `.bak` was restored over primary.
+    RecoveredFromBackup(AppConfig),
+    /// Neither `config.bin` nor `.bak` exists and no install marker is present.
+    FreshInstall,
+}
 
 /// Persistent `AppLock` configuration stored encrypted with machine-scope DPAPI.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,7 +172,9 @@ impl AppConfig {
     }
 }
 
-/// Encrypts `cfg` with DPAPI and writes it atomically, preserving a `.bak` copy.
+/// Encrypts `cfg` with DPAPI and writes it atomically, preserving a validated `.bak` copy.
+///
+/// A corrupt primary `config.bin` is never copied into `.bak`.
 ///
 /// # Errors
 /// Returns `CoreError` on encoding, DPAPI encryption, or filesystem error.
@@ -168,12 +187,48 @@ pub fn save_atomic(path: &Path, cfg: &AppConfig) -> Result<(), CoreError> {
 
     let tmp_path = path.with_extension("bin.tmp");
     let bak_path = path.with_extension("bin.bak");
-    fs::write(&tmp_path, &sealed)?;
-    if path.exists() {
+    write_synced(&tmp_path, &sealed)?;
+
+    // Only back up the existing primary file if it passes full validation.
+    if path.exists() && load_single(path).is_ok() {
         let _ = fs::copy(path, &bak_path);
     }
     fs::rename(&tmp_path, path)?;
     Ok(())
+}
+
+/// Loads `AppConfig` using `install_marker_present` to distinguish fresh installs from tampering.
+///
+/// If primary `config.bin` is corrupt/missing and `.bak` is valid, restores `.bak` over `config.bin`
+/// and returns `ConfigLoadOutcome::RecoveredFromBackup`. If `install_marker_present` is `true`
+/// and both files are missing or corrupt, returns `Err(CoreError::CorruptConfig)` (fail closed).
+///
+/// # Errors
+/// Returns `CoreError::CorruptConfig` if configuration is tampered/missing on an installed system.
+pub fn load_with_marker(
+    path: &Path,
+    install_marker_present: bool,
+) -> Result<ConfigLoadOutcome, CoreError> {
+    if let Ok(cfg) = load_single(path) {
+        return Ok(ConfigLoadOutcome::Loaded(cfg));
+    }
+
+    let bak_path = path.with_extension("bin.bak");
+    if let Ok(cfg) = load_single(&bak_path) {
+        if let Ok(sealed) = fs::read(&bak_path) {
+            let tmp_path = path.with_extension("bin.tmp");
+            if write_synced(&tmp_path, &sealed).is_ok() {
+                let _ = fs::rename(&tmp_path, path);
+            }
+        }
+        return Ok(ConfigLoadOutcome::RecoveredFromBackup(cfg));
+    }
+
+    if !install_marker_present && !path.exists() && !bak_path.exists() {
+        return Ok(ConfigLoadOutcome::FreshInstall);
+    }
+
+    Err(CoreError::CorruptConfig)
 }
 
 /// Loads and decrypts `AppConfig`, falling back to `.bak` if the primary file is corrupt.
@@ -181,11 +236,36 @@ pub fn save_atomic(path: &Path, cfg: &AppConfig) -> Result<(), CoreError> {
 /// # Errors
 /// Returns `CoreError` if both primary and backup files are missing or corrupt.
 pub fn load_fail_closed(path: &Path) -> Result<AppConfig, CoreError> {
-    if let Ok(cfg) = load_single(path) {
-        return Ok(cfg);
+    match load_with_marker(path, true)? {
+        ConfigLoadOutcome::Loaded(cfg) | ConfigLoadOutcome::RecoveredFromBackup(cfg) => Ok(cfg),
+        ConfigLoadOutcome::FreshInstall => Err(CoreError::CorruptConfig),
     }
-    let bak_path = path.with_extension("bin.bak");
-    load_single(&bak_path)
+}
+
+/// Appends a timestamped tamper event (no secrets) to a size-capped append-only log file.
+///
+/// Temporary until `FR-GEN-03` (activity log) is implemented, at which point tamper events
+/// will be routed into the unified activity log.
+pub fn append_tamper_event(log_path: &Path, now_unix_secs: u64, event: &str) {
+    if let Some(parent) = log_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(meta) = fs::metadata(log_path) {
+        if meta.len() >= MAX_TAMPER_LOG_BYTES {
+            let rotated = log_path.with_extension("log.1");
+            let _ = fs::rename(log_path, rotated);
+        }
+    }
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(log_path) {
+        let _ = writeln!(file, "[{now_unix_secs}] TAMPER: {event}");
+    }
+}
+
+fn write_synced(path: &Path, bytes: &[u8]) -> Result<(), CoreError> {
+    let mut file = File::create(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 fn load_single(path: &Path) -> Result<AppConfig, CoreError> {
@@ -270,10 +350,79 @@ mod tests {
         let loaded = load_fail_closed(&cfg_path)?;
         assert_eq!(loaded, cfg);
 
-        // Tamper primary config; fail-closed loader recovers last-known-good .bak.
+        // Tamper primary config; fail-closed loader recovers last-known-good .bak and restores primary.
         fs::write(&cfg_path, b"tampered-bytes")?;
-        let recovered = load_fail_closed(&cfg_path)?;
-        assert_eq!(recovered, cfg);
+        let outcome = load_with_marker(&cfg_path, true)?;
+        assert_eq!(outcome, ConfigLoadOutcome::RecoveredFromBackup(cfg.clone()));
+        assert_eq!(
+            load_with_marker(&cfg_path, true)?,
+            ConfigLoadOutcome::Loaded(cfg)
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_primary_does_not_overwrite_valid_backup() -> Result<(), CoreError> {
+        let dir = std::env::temp_dir().join(format!("applock_bak_guard_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let cfg_path = dir.join("config.bin");
+        let bak_path = cfg_path.with_extension("bin.bak");
+
+        let cfg1 = AppConfig {
+            pin_hash: Some("$argon2id$pin1".to_string()),
+            ..AppConfig::default()
+        };
+        let cfg2 = AppConfig {
+            pin_hash: Some("$argon2id$pin2".to_string()),
+            ..AppConfig::default()
+        };
+        let cfg3 = AppConfig {
+            pin_hash: Some("$argon2id$pin3".to_string()),
+            ..AppConfig::default()
+        };
+
+        save_atomic(&cfg_path, &cfg1)?;
+        save_atomic(&cfg_path, &cfg2)?;
+        assert_eq!(load_single(&bak_path)?, cfg1);
+
+        // Corrupt primary before saving cfg3: .bak must keep cfg1, not the corrupt primary.
+        fs::write(&cfg_path, b"corrupt-primary")?;
+        save_atomic(&cfg_path, &cfg3)?;
+        assert_eq!(load_single(&bak_path)?, cfg1);
+        assert_eq!(load_single(&cfg_path)?, cfg3);
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn install_marker_with_deleted_configs_fails_closed() {
+        let dir = std::env::temp_dir().join(format!("applock_deleted_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let cfg_path = dir.join("config.bin");
+
+        // Fresh install (no marker, no files) -> FreshInstall.
+        let fresh = load_with_marker(&cfg_path, false);
+        assert!(matches!(fresh, Ok(ConfigLoadOutcome::FreshInstall)));
+
+        // Marker present, both files deleted -> must fail closed, never FreshInstall.
+        let tampered = load_with_marker(&cfg_path, true);
+        assert!(matches!(tampered, Err(CoreError::CorruptConfig)));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn append_tamper_event_writes_without_secrets() -> Result<(), CoreError> {
+        let dir = std::env::temp_dir().join(format!("applock_tlog_{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let log_path = dir.join("tamper.log");
+
+        append_tamper_event(&log_path, 12345, "Primary config tampered; restored backup");
+        let content = fs::read_to_string(&log_path)?;
+        assert!(content.contains("[12345] TAMPER: Primary config tampered; restored backup"));
 
         let _ = fs::remove_dir_all(&dir);
         Ok(())

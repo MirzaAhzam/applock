@@ -68,3 +68,5 @@ Filename: "{app}\applock-agent.exe"; Description: "Start AppLock protection now"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM applock-agent.exe"; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "stop AppLockService"; Flags: runhidden waituntilterminated
 Filename: "{sys}\sc.exe"; Parameters: "delete AppLockService"; Flags: runhidden waituntilterminated
+; Remove the HKLM install marker on full uninstall (upgrades do not run [UninstallRun]).
+Filename: "{sys}\reg.exe"; Parameters: "delete ""HKLM\SOFTWARE\AppLock"" /f"; Flags: runhidden waituntilterminated
