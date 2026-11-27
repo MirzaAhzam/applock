@@ -349,6 +349,55 @@ fn handle_change_pin(
     (save_atomic(&path_clone, &cfg_clone).is_ok(), 0)
 }
 
+fn handle_verify_credential(
+    state: &Arc<Mutex<ServiceState>>,
+    nonce: [u8; 16],
+    target_pid: u32,
+    secret: &[u8],
+) -> Response {
+    let resolved_app = if target_pid == 0 {
+        None
+    } else {
+        query_image_path(target_pid).ok().and_then(|p| {
+            Path::new(&p)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .map(str::to_ascii_lowercase)
+        })
+    };
+    let (allowed, lockout_remaining_secs) =
+        verify_and_update(state, secret, resolved_app.as_deref());
+    if allowed && target_pid != 0 {
+        let _ = resume_process(target_pid);
+    }
+    Response::CredentialResult {
+        nonce,
+        allowed,
+        lockout_remaining_secs,
+    }
+}
+
+fn list_app_modes_response(state: &Arc<Mutex<ServiceState>>, nonce: [u8; 16]) -> Response {
+    let mut apps: Vec<(String, u64)> = state
+        .lock()
+        .map(|g| {
+            g.config
+                .locked_apps
+                .iter()
+                .map(|a| {
+                    let secs = match a.mode {
+                        LockMode::Always => 0,
+                        LockMode::Grace { seconds } => seconds,
+                    };
+                    (a.app_id.clone(), secs)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    apps.sort_by(|a, b| a.0.cmp(&b.0));
+    Response::AppModes { nonce, apps }
+}
+
 fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response {
     match Request::decode(frame) {
         Ok(Request::Ping { nonce }) => Response::Pong { nonce },
@@ -362,28 +411,7 @@ fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response 
             nonce,
             target_pid,
             secret,
-        }) => {
-            let resolved_app = if target_pid == 0 {
-                None
-            } else {
-                query_image_path(target_pid).ok().and_then(|p| {
-                    Path::new(&p)
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .map(str::to_ascii_lowercase)
-                })
-            };
-            let (allowed, lockout_remaining_secs) =
-                verify_and_update(state, &secret, resolved_app.as_deref());
-            if allowed && target_pid != 0 {
-                let _ = resume_process(target_pid);
-            }
-            Response::CredentialResult {
-                nonce,
-                allowed,
-                lockout_remaining_secs,
-            }
-        }
+        }) => handle_verify_credential(state, nonce, target_pid, &secret),
         Ok(Request::ListLockedApps { nonce }) => {
             let mut apps: Vec<String> = state
                 .lock()
@@ -427,26 +455,7 @@ fn handle_ipc_frame(state: &Arc<Mutex<ServiceState>>, frame: &[u8]) -> Response 
             nonce,
             ok: handle_set_app_mode(state, &app_id, grace_seconds),
         },
-        Ok(Request::ListAppModes { nonce }) => {
-            let mut apps: Vec<(String, u64)> = state
-                .lock()
-                .map(|g| {
-                    g.config
-                        .locked_apps
-                        .iter()
-                        .map(|a| {
-                            let secs = match a.mode {
-                                LockMode::Always => 0,
-                                LockMode::Grace { seconds } => seconds,
-                            };
-                            (a.app_id.clone(), secs)
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            apps.sort_by(|a, b| a.0.cmp(&b.0));
-            Response::AppModes { nonce, apps }
-        }
+        Ok(Request::ListAppModes { nonce }) => list_app_modes_response(state, nonce),
         Err(_) => Response::Error {
             nonce: [0_u8; 16],
             code: 400,
