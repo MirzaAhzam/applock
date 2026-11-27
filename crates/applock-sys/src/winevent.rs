@@ -223,7 +223,7 @@ unsafe extern "system" fn enum_child_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let mut child_pid: u32 = 0;
     GetWindowThreadProcessId(hwnd, &raw mut child_pid);
     if child_pid != 0 && child_pid != state.host_pid {
-        if let Some(path) = query_image_path(child_pid) {
+        if let Ok(path) = query_image_path(child_pid) {
             state.found = Some((child_pid, path));
             return 0;
         }
