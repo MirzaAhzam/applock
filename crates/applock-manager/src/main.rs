@@ -530,22 +530,22 @@ fn wire_activity_callbacks(window: &ManagerWindow) {
         if fill_random(&mut nonce).is_err() {
             return;
         }
-        let rows: Vec<ActivityRow> =
-            match send_ipc(&Request::ListActivityLog { nonce, limit: 100 }) {
-                Some(Response::ActivityLogEntries {
-                    nonce: r_nonce,
-                    entries,
-                }) if r_nonce == nonce => entries
-                    .into_iter()
-                    .map(|(ts, kind, target, result)| ActivityRow {
-                        time: ts.to_string().into(),
-                        kind: kind.into(),
-                        target: target.into(),
-                        result: result.into(),
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            };
+        let rows: Vec<ActivityRow> = match send_ipc(&Request::ListActivityLog { nonce, limit: 100 })
+        {
+            Some(Response::ActivityLogEntries {
+                nonce: r_nonce,
+                entries,
+            }) if r_nonce == nonce => entries
+                .into_iter()
+                .map(|(ts, kind, target, result)| ActivityRow {
+                    time: ts.to_string().into(),
+                    kind: kind.into(),
+                    target: target.into(),
+                    result: result.into(),
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         w.set_activity_rows(ModelRc::new(VecModel::from(rows)));
     });
 
