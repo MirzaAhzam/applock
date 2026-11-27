@@ -12,7 +12,9 @@ use std::thread;
 
 use applock_i18n::{Language, LockStrings, ManagerStrings};
 use applock_ipc::{Request, Response};
-use applock_sys::apps::{browse_exe_dialog, enumerate_installed_apps, extract_icon_rgba, DiscoveredApp};
+use applock_sys::apps::{
+    browse_exe_dialog, enumerate_installed_apps, extract_icon_rgba, DiscoveredApp,
+};
 use applock_sys::crypto::fill_random;
 use applock_sys::pipe::{PipeClient, PIPE_NAME};
 use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
@@ -120,7 +122,8 @@ fn build_app_entries(
         }
     }
 
-    let mut custom_locked: Vec<&String> = locked_ids.iter().filter(|id| !seen.contains(*id)).collect();
+    let mut custom_locked: Vec<&String> =
+        locked_ids.iter().filter(|id| !seen.contains(*id)).collect();
     custom_locked.sort();
     for id in custom_locked {
         if q.is_empty() || id.to_ascii_lowercase().contains(&q) {
@@ -292,9 +295,8 @@ fn wire_apps_callbacks(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashSet
         let Some(w) = weak.upgrade() else {
             return;
         };
-        let entries = DISCOVERED_APPS.with(|cell| {
-            build_app_entries(&cell.borrow(), &lock_ref.borrow(), query.as_str())
-        });
+        let entries = DISCOVERED_APPS
+            .with(|cell| build_app_entries(&cell.borrow(), &lock_ref.borrow(), query.as_str()));
         w.set_apps(ModelRc::new(VecModel::from(entries)));
     });
 

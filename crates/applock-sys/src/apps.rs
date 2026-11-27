@@ -7,9 +7,7 @@ use std::mem::{size_of, zeroed};
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{
-    ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HGDIOBJ, MAX_PATH,
-};
+use windows_sys::Win32::Foundation::{ERROR_NO_MORE_ITEMS, ERROR_SUCCESS, HGDIOBJ, MAX_PATH};
 use windows_sys::Win32::Graphics::Gdi::{
     CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, BITMAP, BITMAPINFO,
     BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS,
@@ -113,7 +111,9 @@ pub fn browse_exe_dialog() -> Option<String> {
         .iter()
         .position(|&c| c == 0)
         .unwrap_or(file_buf.len());
-    let path = String::from_utf16_lossy(&file_buf[..end]).trim().to_string();
+    let path = String::from_utf16_lossy(&file_buf[..end])
+        .trim()
+        .to_string();
     if path.is_empty() {
         None
     } else {
@@ -219,7 +219,8 @@ fn read_uninstall_entry(root: HKEY, subkey: &str) -> Option<DiscoveredApp> {
     let subkey_w = to_wide_null(subkey);
     let mut hkey: HKEY = ptr::null_mut();
     // SAFETY: `subkey_w` is null-terminated; `hkey` is closed before returning.
-    if unsafe { RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_READ, &raw mut hkey) } != ERROR_SUCCESS
+    if unsafe { RegOpenKeyExW(root, subkey_w.as_ptr(), 0, KEY_READ, &raw mut hkey) }
+        != ERROR_SUCCESS
     {
         return None;
     }
@@ -376,13 +377,19 @@ fn find_exe_path_in_text(text: &str) -> Option<String> {
 }
 
 fn scan_uwp_packages(out: &mut HashMap<String, DiscoveredApp>) {
-    let subkey =
-        r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+    let subkey = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
     let subkey_w = to_wide_null(subkey);
     let mut hkey: HKEY = ptr::null_mut();
     // SAFETY: `subkey_w` is null-terminated; `hkey` is closed before returning.
-    if unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey_w.as_ptr(), 0, KEY_READ, &raw mut hkey) }
-        != ERROR_SUCCESS
+    if unsafe {
+        RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            subkey_w.as_ptr(),
+            0,
+            KEY_READ,
+            &raw mut hkey,
+        )
+    } != ERROR_SUCCESS
     {
         return;
     }
@@ -624,10 +631,19 @@ mod tests {
 
     #[test]
     fn filters_out_uninstallers_and_runtimes() {
-        assert!(is_filtered_entry("Microsoft Visual C++ 2022 Redistributable", "vc.exe"));
-        assert!(is_filtered_entry("My App", r"C:\Program Files\MyApp\unins000.exe"));
+        assert!(is_filtered_entry(
+            "Microsoft Visual C++ 2022 Redistributable",
+            "vc.exe"
+        ));
+        assert!(is_filtered_entry(
+            "My App",
+            r"C:\Program Files\MyApp\unins000.exe"
+        ));
         assert!(is_filtered_entry("AppLock", "applock-service.exe"));
-        assert!(!is_filtered_entry("Notepad", r"C:\Windows\System32\notepad.exe"));
+        assert!(!is_filtered_entry(
+            "Notepad",
+            r"C:\Windows\System32\notepad.exe"
+        ));
     }
 
     #[test]
@@ -667,3 +683,4 @@ mod tests {
         assert!(!apps.is_empty());
     }
 }
+
