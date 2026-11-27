@@ -127,10 +127,10 @@ fn main() -> ExitCode {
                 } else {
                     WindowVisibility::Hidden
                 };
-                let maybe_pipe = active_overlays
-                    .lock()
-                    .ok()
-                    .and_then(|map| map.get(&ev.hwnd).map(|e| (e.pipe_name.clone(), e.last_rect)));
+                let maybe_pipe = active_overlays.lock().ok().and_then(|map| {
+                    map.get(&ev.hwnd)
+                        .map(|e| (e.pipe_name.clone(), e.last_rect))
+                });
                 if let Some((pipe_name, rect)) = maybe_pipe {
                     send_overlay_update(&pipe_name, rect, vis);
                 }
@@ -173,15 +173,15 @@ fn main() -> ExitCode {
                     return;
                 }
 
-                let bounds = ev
-                    .bounds
-                    .or_else(|| get_window_bounds(ev.hwnd))
-                    .unwrap_or(WindowBounds {
-                        left: 100,
-                        top: 100,
-                        width: 480,
-                        height: 360,
-                    });
+                let bounds =
+                    ev.bounds
+                        .or_else(|| get_window_bounds(ev.hwnd))
+                        .unwrap_or(WindowBounds {
+                            left: 100,
+                            top: 100,
+                            width: 480,
+                            height: 360,
+                        });
                 let rect = to_window_rect(bounds);
                 let pipe_name = make_overlay_pipe_name(ev.pid);
 

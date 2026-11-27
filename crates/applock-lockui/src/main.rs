@@ -256,14 +256,15 @@ fn main() -> ExitCode {
                                 *g = new_bounds;
                             }
                         }
-                        let effective_bounds = bounds_state
-                            .lock()
-                            .map(|g| *g)
-                            .unwrap_or(new_bounds);
+                        let effective_bounds =
+                            bounds_state.lock().map(|g| *g).unwrap_or(new_bounds);
                         let weak_ui = weak_win.clone();
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(w) = weak_ui.upgrade() {
-                                if visible && effective_bounds.width > 0 && effective_bounds.height > 0 {
+                                if visible
+                                    && effective_bounds.width > 0
+                                    && effective_bounds.height > 0
+                                {
                                     w.window().set_position(slint::PhysicalPosition::new(
                                         effective_bounds.left,
                                         effective_bounds.top,
