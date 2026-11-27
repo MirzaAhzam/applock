@@ -232,58 +232,7 @@ fn main() -> ExitCode {
     }
 
     if let Some(pipe_name) = args.overlay_pipe.clone() {
-        let weak_win = window.as_weak();
-        let bounds_state = Arc::clone(&current_bounds);
-        thread::spawn(move || {
-            let Ok(server) = PipeServer::create(&pipe_name) else {
-                return;
-            };
-            loop {
-                if server.accept().is_err() {
-                    continue;
-                }
-                if let Ok(frame) = server.read_frame() {
-                    if let Ok(update) = OverlayUpdate::decode(&frame) {
-                        let visible = update.visibility == WindowVisibility::Visible;
-                        let new_bounds = WindowBounds {
-                            left: update.rect.x,
-                            top: update.rect.y,
-                            width: update.rect.width,
-                            height: update.rect.height,
-                        };
-                        if visible && new_bounds.width > 0 && new_bounds.height > 0 {
-                            if let Ok(mut g) = bounds_state.lock() {
-                                *g = new_bounds;
-                            }
-                        }
-                        let effective_bounds =
-                            bounds_state.lock().map(|g| *g).unwrap_or(new_bounds);
-                        let weak_ui = weak_win.clone();
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(w) = weak_ui.upgrade() {
-                                if visible
-                                    && effective_bounds.width > 0
-                                    && effective_bounds.height > 0
-                                {
-                                    w.window().set_position(slint::PhysicalPosition::new(
-                                        effective_bounds.left,
-                                        effective_bounds.top,
-                                    ));
-                                    w.window().set_size(slint::PhysicalSize::new(
-                                        u32::try_from(effective_bounds.width).unwrap_or(420),
-                                        u32::try_from(effective_bounds.height).unwrap_or(290),
-                                    ));
-                                }
-                                if let Some(hwnd) = find_own_window_hwnd() {
-                                    configure_lock_overlay_hwnd(hwnd, effective_bounds, visible);
-                                }
-                            }
-                        });
-                    }
-                }
-                server.disconnect();
-            }
-        });
+        spawn_overlay_listener(&window, pipe_name, Arc::clone(&current_bounds));
     }
 
     window.set_app_name(args.app_name.clone().into());
@@ -356,6 +305,68 @@ fn main() -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+fn spawn_overlay_listener(
+    window: &LockWindow,
+    pipe_name: String,
+    bounds_state: Arc<Mutex<WindowBounds>>,
+) {
+    let weak_win = window.as_weak();
+    thread::spawn(move || {
+        let Ok(server) = PipeServer::create(&pipe_name) else {
+            return;
+        };
+        loop {
+            if server.accept().is_err() {
+                continue;
+            }
+            if let Ok(frame) = server.read_frame() {
+                if let Ok(update) = OverlayUpdate::decode(&frame) {
+                    apply_overlay_update(&weak_win, &bounds_state, update);
+                }
+            }
+            server.disconnect();
+        }
+    });
+}
+
+fn apply_overlay_update(
+    weak_win: &slint::Weak<LockWindow>,
+    bounds_state: &Arc<Mutex<WindowBounds>>,
+    update: OverlayUpdate,
+) {
+    let visible = update.visibility == WindowVisibility::Visible;
+    let new_bounds = WindowBounds {
+        left: update.rect.x,
+        top: update.rect.y,
+        width: update.rect.width,
+        height: update.rect.height,
+    };
+    if visible && new_bounds.width > 0 && new_bounds.height > 0 {
+        if let Ok(mut g) = bounds_state.lock() {
+            *g = new_bounds;
+        }
+    }
+    let effective_bounds = bounds_state.lock().map(|g| *g).unwrap_or(new_bounds);
+    let weak_ui = weak_win.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(w) = weak_ui.upgrade() {
+            if visible && effective_bounds.width > 0 && effective_bounds.height > 0 {
+                w.window().set_position(slint::PhysicalPosition::new(
+                    effective_bounds.left,
+                    effective_bounds.top,
+                ));
+                w.window().set_size(slint::PhysicalSize::new(
+                    u32::try_from(effective_bounds.width).unwrap_or(420),
+                    u32::try_from(effective_bounds.height).unwrap_or(290),
+                ));
+            }
+            if let Some(hwnd) = find_own_window_hwnd() {
+                configure_lock_overlay_hwnd(hwnd, effective_bounds, visible);
+            }
+        }
+    });
 }
 
 #[cfg(test)]
