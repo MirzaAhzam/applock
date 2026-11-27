@@ -92,7 +92,11 @@ pub struct ManagerStrings {
     pub add_placeholder: String,
     /// Add/lock app button label.
     pub add_button: String,
-    /// Empty state message when no apps are locked.
+    /// Secondary Browse `.exe` button label.
+    pub browse_button: String,
+    /// Status text while scanning installed apps.
+    pub loading_apps: String,
+    /// Empty state message when no apps match.
     pub empty_apps: String,
     /// Locked badge text.
     pub locked_label: String,
@@ -154,10 +158,9 @@ impl ManagerStrings {
                 "Add executable (for example: whatsapp.exe)",
             ),
             add_button: get("mgr_add_button", "Lock app"),
-            empty_apps: get(
-                "mgr_empty_apps",
-                "No apps locked yet. Choose an app from the list.",
-            ),
+            browse_button: get("mgr_browse_button", "Browse .exe"),
+            loading_apps: get("mgr_loading_apps", "Scanning installed apps..."),
+            empty_apps: get("mgr_empty_apps", "No matching apps found."),
             locked_label: get("mgr_locked_label", "Locked"),
             unlocked_label: get("mgr_unlocked_label", "Unlocked"),
             remove_label: get("mgr_remove_label", "Unlock"),

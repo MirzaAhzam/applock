@@ -4,14 +4,18 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+use std::path::Path;
 use std::process::ExitCode;
 use std::rc::Rc;
+use std::thread;
 
 use applock_i18n::{Language, LockStrings, ManagerStrings};
 use applock_ipc::{Request, Response};
+use applock_sys::apps::{browse_exe_dialog, enumerate_installed_apps, extract_icon_rgba, DiscoveredApp};
 use applock_sys::crypto::fill_random;
 use applock_sys::pipe::{PipeClient, PIPE_NAME};
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, Image, ModelRc, Rgba8Pixel, SharedPixelBuffer, VecModel};
 
 #[allow(
     clippy::all,
@@ -67,15 +71,71 @@ fn send_ipc(req: &Request) -> Option<Response> {
     Response::decode(&resp_bytes).ok()
 }
 
-fn filter_apps(all: &[String], query: &str) -> Vec<AppEntry> {
+#[derive(Clone)]
+struct AppRowState {
+    id: String,
+    name: String,
+    path: String,
+    icon: Option<Image>,
+}
+
+thread_local! {
+    static DISCOVERED_APPS: RefCell<Vec<AppRowState>> = const { RefCell::new(Vec::new()) };
+}
+
+fn rgba_to_slint_image(rgba: Option<(u32, u32, Vec<u8>)>) -> Option<Image> {
+    let (w, h, pixels) = rgba?;
+    let expected = usize::try_from(w.saturating_mul(h).saturating_mul(4)).ok()?;
+    if pixels.len() != expected || w == 0 || h == 0 {
+        return None;
+    }
+    let buf = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&pixels, w, h);
+    Some(Image::from_rgba8(buf))
+}
+
+fn build_app_entries(
+    discovered: &[AppRowState],
+    locked_ids: &HashSet<String>,
+    query: &str,
+) -> Vec<AppEntry> {
     let q = query.trim().to_ascii_lowercase();
-    all.iter()
-        .filter(|name| q.is_empty() || name.to_ascii_lowercase().contains(&q))
-        .map(|name| AppEntry {
-            name: name.as_str().into(),
-            locked: true,
-        })
-        .collect()
+    let mut seen = HashSet::with_capacity(discovered.len());
+    let mut entries = Vec::with_capacity(discovered.len() + locked_ids.len());
+
+    for row in discovered {
+        seen.insert(row.id.clone());
+        let matches = q.is_empty()
+            || row.name.to_ascii_lowercase().contains(&q)
+            || row.id.to_ascii_lowercase().contains(&q)
+            || row.path.to_ascii_lowercase().contains(&q);
+        if matches {
+            entries.push(AppEntry {
+                id: row.id.as_str().into(),
+                name: row.name.as_str().into(),
+                path: row.path.as_str().into(),
+                icon: row.icon.clone().unwrap_or_default(),
+                has_icon: row.icon.is_some(),
+                locked: locked_ids.contains(&row.id),
+            });
+        }
+    }
+
+    let mut custom_locked: Vec<&String> = locked_ids.iter().filter(|id| !seen.contains(*id)).collect();
+    custom_locked.sort();
+    for id in custom_locked {
+        if q.is_empty() || id.to_ascii_lowercase().contains(&q) {
+            entries.push(AppEntry {
+                id: id.as_str().into(),
+                name: id.as_str().into(),
+                path: id.as_str().into(),
+                icon: Image::default(),
+                has_icon: false,
+                locked: true,
+            });
+        }
+    }
+
+    entries
 }
 
 fn apply_strings(window: &ManagerWindow, lang: Language) {
@@ -92,6 +152,8 @@ fn apply_strings(window: &ManagerWindow, lang: Language) {
     window.set_search_placeholder(mgr_s.search_placeholder.into());
     window.set_add_placeholder(mgr_s.add_placeholder.into());
     window.set_add_button_label(mgr_s.add_button.into());
+    window.set_browse_button_label(mgr_s.browse_button.into());
+    window.set_loading_apps_label(mgr_s.loading_apps.into());
     window.set_empty_apps_label(mgr_s.empty_apps.into());
     window.set_locked_label(mgr_s.locked_label.into());
     window.set_unlocked_label(mgr_s.unlocked_label.into());
@@ -107,35 +169,71 @@ fn apply_strings(window: &ManagerWindow, lang: Language) {
     window.set_limits_disk(mgr_s.limits_disk.into());
 }
 
-fn fetch_locked_apps() -> Vec<String> {
+fn fetch_locked_apps() -> HashSet<String> {
     let mut nonce = [0_u8; 16];
     if fill_random(&mut nonce).is_err() {
-        return Vec::new();
+        return HashSet::new();
     }
     match send_ipc(&Request::ListLockedApps { nonce }) {
         Some(Response::LockedApps {
             nonce: r_nonce,
             apps,
-        }) if r_nonce == nonce => apps,
-        _ => Vec::new(),
+        }) if r_nonce == nonce => apps.into_iter().map(|s| s.to_ascii_lowercase()).collect(),
+        _ => HashSet::new(),
     }
 }
 
-fn refresh_app_model(window: &ManagerWindow, cached: &Rc<RefCell<Vec<String>>>, query: &str) {
-    let list = fetch_locked_apps();
-    let entries = filter_apps(&list, query);
-    *cached.borrow_mut() = list;
+fn refresh_app_model(
+    window: &ManagerWindow,
+    locked_cache: &Rc<RefCell<HashSet<String>>>,
+    query: &str,
+) {
+    let locked = fetch_locked_apps();
+    *locked_cache.borrow_mut() = locked.clone();
+    let entries = DISCOVERED_APPS.with(|cell| build_app_entries(&cell.borrow(), &locked, query));
     window.set_apps(ModelRc::new(VecModel::from(entries)));
+}
+
+fn start_async_discovery(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashSet<String>>>) {
+    window.set_loading_apps(true);
+    let weak_bg = window.as_weak();
+    let _ = locked_cache;
+
+    thread::spawn(move || {
+        let raw_apps: Vec<DiscoveredApp> = enumerate_installed_apps();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(w) = weak_bg.upgrade() {
+                let rows: Vec<AppRowState> = raw_apps
+                    .into_iter()
+                    .map(|a| AppRowState {
+                        id: a.app_id,
+                        name: a.display_name,
+                        path: a.exe_path,
+                        icon: rgba_to_slint_image(a.icon_rgba),
+                    })
+                    .collect();
+                DISCOVERED_APPS.with(|cell| {
+                    *cell.borrow_mut() = rows;
+                });
+                w.set_loading_apps(false);
+                let locked = fetch_locked_apps();
+                let entries = DISCOVERED_APPS.with(|cell| {
+                    build_app_entries(&cell.borrow(), &locked, w.get_search_query().as_str())
+                });
+                w.set_apps(ModelRc::new(VecModel::from(entries)));
+            }
+        });
+    });
 }
 
 fn wire_gate_callbacks(
     window: &ManagerWindow,
     current_lang: &Rc<Cell<Language>>,
-    cached_apps: &Rc<RefCell<Vec<String>>>,
+    locked_cache: &Rc<RefCell<HashSet<String>>>,
 ) {
     let weak = window.as_weak();
     let lang_cell = Rc::clone(current_lang);
-    let apps_cache = Rc::clone(cached_apps);
+    let lock_ref = Rc::clone(locked_cache);
     window.on_gate_submitted(move |secret| {
         let Some(w) = weak.upgrade() else {
             return;
@@ -164,7 +262,8 @@ fn wire_gate_callbacks(
             }) if r_nonce == nonce => {
                 w.set_gate_error("".into());
                 w.set_unlocked(true);
-                refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
+                refresh_app_model(&w, &lock_ref, w.get_search_query().as_str());
+                start_async_discovery(&w, &lock_ref);
             }
             Some(Response::CredentialResult {
                 nonce: r_nonce,
@@ -186,73 +285,83 @@ fn wire_gate_callbacks(
     });
 }
 
-fn wire_apps_callbacks(window: &ManagerWindow, cached_apps: &Rc<RefCell<Vec<String>>>) {
+fn wire_apps_callbacks(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashSet<String>>>) {
     let weak = window.as_weak();
-    let apps_cache = Rc::clone(cached_apps);
+    let lock_ref = Rc::clone(locked_cache);
     window.on_search_changed(move |query| {
         let Some(w) = weak.upgrade() else {
             return;
         };
-        let entries = filter_apps(&apps_cache.borrow(), query.as_str());
+        let entries = DISCOVERED_APPS.with(|cell| {
+            build_app_entries(&cell.borrow(), &lock_ref.borrow(), query.as_str())
+        });
         w.set_apps(ModelRc::new(VecModel::from(entries)));
     });
 
     let weak = window.as_weak();
-    let apps_cache = Rc::clone(cached_apps);
-    window.on_add_app_submitted(move |raw_name| {
+    let lock_ref = Rc::clone(locked_cache);
+    window.on_browse_exe_clicked(move || {
         let Some(w) = weak.upgrade() else {
             return;
         };
-        let trimmed = raw_name.trim();
-        if trimmed.is_empty() {
+        let Some(exe_path) = browse_exe_dialog() else {
             return;
-        }
-        let mut nonce = [0_u8; 16];
-        if fill_random(&mut nonce).is_err() {
-            return;
-        }
-        let req = Request::SetAppLocked {
-            nonce,
-            app_id: trimmed.to_string(),
-            locked: true,
         };
-        if matches!(
-            send_ipc(&req),
-            Some(Response::Ack {
-                nonce: r_nonce,
-                ok: true
-            }) if r_nonce == nonce
-        ) {
-            w.set_add_input("".into());
-            refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
+        let Some(app_id) = Path::new(&exe_path)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(str::to_ascii_lowercase)
+        else {
+            return;
+        };
+        if send_set_app_locked(&app_id, true) {
+            DISCOVERED_APPS.with(|cell| {
+                let mut rows = cell.borrow_mut();
+                if !rows.iter().any(|r| r.id == app_id) {
+                    let name = app_id.strip_suffix(".exe").unwrap_or(&app_id).to_string();
+                    let icon = rgba_to_slint_image(extract_icon_rgba(&exe_path));
+                    rows.push(AppRowState {
+                        id: app_id,
+                        name,
+                        path: exe_path,
+                        icon,
+                    });
+                }
+            });
+            refresh_app_model(&w, &lock_ref, w.get_search_query().as_str());
         }
     });
 
     let weak = window.as_weak();
-    let apps_cache = Rc::clone(cached_apps);
-    window.on_toggle_app(move |name, locked| {
+    let lock_ref = Rc::clone(locked_cache);
+    window.on_toggle_app(move |app_id, locked| {
         let Some(w) = weak.upgrade() else {
             return;
         };
-        let mut nonce = [0_u8; 16];
-        if fill_random(&mut nonce).is_err() {
-            return;
-        }
-        let req = Request::SetAppLocked {
-            nonce,
-            app_id: name.to_string(),
-            locked,
-        };
-        if matches!(
-            send_ipc(&req),
-            Some(Response::Ack {
-                nonce: r_nonce,
-                ok: true
-            }) if r_nonce == nonce
-        ) {
-            refresh_app_model(&w, &apps_cache, w.get_search_query().as_str());
+        let normalized = app_id.to_ascii_lowercase();
+        if send_set_app_locked(&normalized, locked) {
+            refresh_app_model(&w, &lock_ref, w.get_search_query().as_str());
         }
     });
+}
+
+fn send_set_app_locked(app_id: &str, locked: bool) -> bool {
+    let mut nonce = [0_u8; 16];
+    if fill_random(&mut nonce).is_err() {
+        return false;
+    }
+    let req = Request::SetAppLocked {
+        nonce,
+        app_id: app_id.to_string(),
+        locked,
+    };
+    matches!(
+        send_ipc(&req),
+        Some(Response::Ack {
+            nonce: r_nonce,
+            ok: true
+        }) if r_nonce == nonce
+    )
 }
 
 fn wire_security_callbacks(
@@ -350,13 +459,13 @@ fn main() -> ExitCode {
 
     let current_lang = Rc::new(Cell::new(args.lang));
     let dark_mode = Rc::new(Cell::new(args.dark));
-    let cached_apps = Rc::new(RefCell::new(Vec::<String>::new()));
+    let locked_cache = Rc::new(RefCell::new(HashSet::<String>::new()));
 
     window.global::<Tokens>().set_dark_mode(args.dark);
     apply_strings(&window, args.lang);
 
-    wire_gate_callbacks(&window, &current_lang, &cached_apps);
-    wire_apps_callbacks(&window, &cached_apps);
+    wire_gate_callbacks(&window, &current_lang, &locked_cache);
+    wire_apps_callbacks(&window, &locked_cache);
     wire_security_callbacks(&window, &current_lang, &dark_mode);
 
     if window.run().is_err() {
@@ -371,12 +480,27 @@ mod tests {
 
     #[test]
     fn filter_apps_matches_case_insensitive_substring() {
-        let list = vec!["notepad.exe".to_string(), "WhatsApp.exe".to_string()];
-        let all = filter_apps(&list, "");
+        let list = vec![
+            AppRowState {
+                id: "notepad.exe".to_string(),
+                name: "Notepad".to_string(),
+                path: r"C:\Windows\System32\notepad.exe".to_string(),
+                icon: None,
+            },
+            AppRowState {
+                id: "whatsapp.exe".to_string(),
+                name: "WhatsApp".to_string(),
+                path: r"C:\Users\Test\AppData\Local\WhatsApp\WhatsApp.exe".to_string(),
+                icon: None,
+            },
+        ];
+        let locked = HashSet::from(["whatsapp.exe".to_string()]);
+        let all = build_app_entries(&list, &locked, "");
         assert_eq!(all.len(), 2);
-        let filtered = filter_apps(&list, "whats");
+        let filtered = build_app_entries(&list, &locked, "whats");
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name.as_str(), "WhatsApp.exe");
+        assert_eq!(filtered[0].name.as_str(), "WhatsApp");
+        assert!(filtered[0].locked);
     }
 
     #[test]
