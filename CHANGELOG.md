@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.3.0](https://github.com/MirzaAhzam/applock/compare/v0.2.0...v0.3.0) (2026-11-27)
+
+
+### Features
+
+* **core,service,manager:** add local rotated activity log ([#23](https://github.com/MirzaAhzam/applock/issues/23)) ([2c298ea](https://github.com/MirzaAhzam/applock/commit/2c298eae72e33a0b5e813f7970f5a6f5e6383ea7))
+* **lockui,agent:** scope lock overlay to target window bounds ([#18](https://github.com/MirzaAhzam/applock/issues/18)) ([3b6a36b](https://github.com/MirzaAhzam/applock/commit/3b6a36b7f822e58181e424ee49e8ccf8455a5f5b))
+* **manager,sys:** add installed apps discovery, icons, and instant lock toggles ([#20](https://github.com/MirzaAhzam/applock/issues/20)) ([2737439](https://github.com/MirzaAhzam/applock/commit/2737439088a99875b067dba88b3334fed62a88a1))
+* **service,manager,ipc:** wire per-app grace period mode ([#22](https://github.com/MirzaAhzam/applock/issues/22)) ([fe258b8](https://github.com/MirzaAhzam/applock/commit/fe258b8a4247792ef3c6b95ac737d24886910b14))
+
+
+### Bug Fixes
+
+* **service,sys:** add Windows SCM service dispatcher ([#21](https://github.com/MirzaAhzam/applock/issues/21)) ([9959976](https://github.com/MirzaAhzam/applock/commit/99599763f1c61f262826545cf1bb99dc3ac4446f))
+
 ## [0.2.0](https://github.com/MirzaAhzam/applock/compare/v0.1.0...v0.2.0) (2026-11-27)
 
 

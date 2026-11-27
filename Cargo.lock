@@ -89,7 +89,7 @@ dependencies = [
 
 [[package]]
 name = "applock-agent"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "applock-core",
  "applock-ipc",
@@ -98,7 +98,7 @@ dependencies = [
 
 [[package]]
 name = "applock-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "applock-ipc",
  "applock-sys",
@@ -110,15 +110,15 @@ dependencies = [
 
 [[package]]
 name = "applock-i18n"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "applock-ipc"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "applock-lockui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "applock-i18n",
  "applock-ipc",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "applock-manager"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "applock-i18n",
  "applock-ipc",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "applock-service"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "applock-core",
  "applock-ipc",
@@ -149,7 +149,7 @@ dependencies = [
 
 [[package]]
 name = "applock-sys"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "windows-sys 0.61.2",
 ]
@@ -4915,7 +4915,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "yoke"
