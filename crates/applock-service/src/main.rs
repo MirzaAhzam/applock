@@ -9,7 +9,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use applock_core::auth::{hash_secret, verify_secret};
-use applock_core::config::{load_fail_closed, save_atomic, AppConfig};
+use applock_core::config::{
+    append_tamper_event, load_with_marker, save_atomic, AppConfig, ConfigLoadOutcome,
+};
 use applock_core::rules::{LockMode, LockedApp, RuleEngine};
 use applock_ipc::{Request, Response};
 use applock_sys::etw::EtwSession;
@@ -20,6 +22,7 @@ use applock_sys::process::{
     launch_hidden_command, resume_process, show_process_windows, suspend_process,
     terminate_process, wait_process_exit,
 };
+use applock_sys::security::{has_install_marker, set_install_marker, verify_and_repair_dir_acl};
 
 const DEFAULT_PIN: &str = "1234";
 const DEFAULT_WATCH_APPS: &[&str] = &[
@@ -59,11 +62,11 @@ fn default_config_path() -> PathBuf {
     PathBuf::from("config.bin")
 }
 
-fn load_or_init_config(path: &Path, apps_override: &[String]) -> AppConfig {
-    if let Ok(cfg) = load_fail_closed(path) {
-        return cfg;
-    }
-    let pin_hash = hash_secret(DEFAULT_PIN.as_bytes()).ok();
+fn tamper_log_path(config_path: &Path) -> PathBuf {
+    config_path.with_file_name("tamper.log")
+}
+
+fn default_locked_apps(apps_override: &[String]) -> Vec<LockedApp> {
     let app_list: Vec<String> = if apps_override.is_empty() {
         DEFAULT_WATCH_APPS
             .iter()
@@ -72,20 +75,94 @@ fn load_or_init_config(path: &Path, apps_override: &[String]) -> AppConfig {
     } else {
         apps_override.to_vec()
     };
-    let locked_apps = app_list
+    app_list
         .into_iter()
         .map(|app_id| LockedApp {
             app_id,
             mode: LockMode::Always,
         })
-        .collect();
-    let cfg = AppConfig {
-        pin_hash,
-        locked_apps,
-        ..AppConfig::default()
+        .collect()
+}
+
+fn load_or_init_config(path: &Path, apps_override: &[String]) -> AppConfig {
+    let log_path = tamper_log_path(path);
+    let now = now_unix_secs();
+
+    // Machine-scope DPAPI detects corruption only; %ProgramData%\AppLock ACL is the real tamper barrier.
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(dir);
+            match verify_and_repair_dir_acl(dir) {
+                Ok(true) => append_tamper_event(
+                    &log_path,
+                    now,
+                    "Permissive ACL detected on config directory and repaired",
+                ),
+                Ok(false) => {}
+                Err(e) => append_tamper_event(
+                    &log_path,
+                    now,
+                    &format!("Config directory ACL verification failed: {e}"),
+                ),
+            }
+        }
+    }
+
+    let marker_present = match has_install_marker() {
+        Ok(present) => present,
+        Err(e) => {
+            append_tamper_event(
+                &log_path,
+                now,
+                &format!("Install marker check failed (failing closed): {e}"),
+            );
+            true
+        }
     };
-    let _ = save_atomic(path, &cfg);
-    cfg
+
+    match load_with_marker(path, marker_present) {
+        Ok(ConfigLoadOutcome::Loaded(cfg)) => cfg,
+        Ok(ConfigLoadOutcome::RecoveredFromBackup(cfg)) => {
+            append_tamper_event(
+                &log_path,
+                now,
+                "Primary config.bin was corrupt or tampered; restored last-known-good backup",
+            );
+            cfg
+        }
+        Ok(ConfigLoadOutcome::FreshInstall) => {
+            let pin_hash = hash_secret(DEFAULT_PIN.as_bytes()).ok();
+            let cfg = AppConfig {
+                pin_hash,
+                locked_apps: default_locked_apps(apps_override),
+                ..AppConfig::default()
+            };
+            if save_atomic(path, &cfg).is_ok() {
+                if let Err(e) = set_install_marker() {
+                    append_tamper_event(
+                        &log_path,
+                        now,
+                        &format!("Failed to write HKLM install marker: {e}"),
+                    );
+                }
+            }
+            cfg
+        }
+        Err(_) => {
+            // Fail closed: do NOT create a fresh unlocked config when install marker exists.
+            append_tamper_event(
+                &log_path,
+                now,
+                "Config and backup missing or corrupt with install marker present; failing closed",
+            );
+            AppConfig {
+                pin_hash: None,
+                password_hash: None,
+                locked_apps: default_locked_apps(apps_override),
+                ..AppConfig::default()
+            }
+        }
+    }
 }
 
 fn verify_and_update(
