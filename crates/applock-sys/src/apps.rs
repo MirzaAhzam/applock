@@ -683,4 +683,3 @@ mod tests {
         assert!(!apps.is_empty());
     }
 }
-
