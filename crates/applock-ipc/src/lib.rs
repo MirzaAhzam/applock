@@ -893,7 +893,7 @@ mod tests {
         let act_resp = Response::ActivityLogEntries {
             nonce,
             entries: vec![(
-                1700000000,
+                1_700_000_000,
                 "unlock".to_string(),
                 "notepad.exe".to_string(),
                 "allowed".to_string(),
