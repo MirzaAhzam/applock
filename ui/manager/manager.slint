@@ -8,6 +8,8 @@ export struct AppEntry {
     icon: image,
     has-icon: bool,
     locked: bool,
+    grace-seconds: int,
+    mode-label: string,
 }
 
 export component ManagerWindow inherits Window {
@@ -64,6 +66,7 @@ export component ManagerWindow inherits Window {
     callback add-app-submitted(string);
     callback browse-exe-clicked();
     callback toggle-app(string, bool);
+    callback cycle-app-mode(string, int);
     callback change-pin-submitted(string, string, string);
     callback toggle-language();
     callback toggle-theme();
@@ -450,6 +453,34 @@ export component ManagerWindow inherits Window {
                                         font-size: Tokens.font-caption;
                                         overflow: elide;
                                         horizontal-alignment: Tokens.rtl ? right : left;
+                                    }
+                                }
+
+                                // Grace / mode pill (visible when locked)
+                                if entry.locked: Rectangle {
+                                    width: 64px;
+                                    height: 30px;
+                                    y: 13px;
+                                    border-radius: Tokens.radius-control;
+                                    background: Tokens.bg;
+                                    border-color: Tokens.border;
+                                    border-width: 1px;
+                                    accessible-role: button;
+                                    accessible-label: entry.mode-label;
+
+                                    TouchArea {
+                                        clicked => {
+                                            root.cycle-app-mode(entry.id, entry.grace-seconds);
+                                        }
+                                    }
+
+                                    Text {
+                                        text: entry.mode-label;
+                                        color: Tokens.text-muted;
+                                        font-size: Tokens.font-caption;
+                                        font-weight: 600;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
                                     }
                                 }
 
