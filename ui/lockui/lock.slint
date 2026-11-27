@@ -16,15 +16,18 @@ export component LockWindow inherits Window {
     callback cancelled();
 
     title: "AppLock";
+    no-frame: true;
+    always-on-top: true;
     width: 420px;
     height: 290px;
-    always-on-top: true;
-    background: Tokens.bg;
+    background: #121413;
     default-font-family: Tokens.font-family;
 
     forward-focus: pin-field;
 
     FocusScope {
+        width: parent.width;
+        height: parent.height;
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 root.cancelled();
@@ -33,11 +36,17 @@ export component LockWindow inherits Window {
             reject
         }
 
+        // Capture all pointer input across the target window bounds.
+        TouchArea {
+            width: parent.width;
+            height: parent.height;
+        }
+
         Rectangle {
-            x: Tokens.space-md;
-            y: Tokens.space-md;
-            width: parent.width - Tokens.space-md * 2;
-            height: parent.height - Tokens.space-md * 2;
+            width: min(388px, parent.width - Tokens.space-md * 2);
+            height: min(260px, parent.height - Tokens.space-md * 2);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
             background: Tokens.surface;
             border-color: Tokens.border;
             border-width: 1px;
