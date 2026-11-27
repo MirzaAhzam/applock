@@ -22,8 +22,9 @@ use windows_sys::Win32::Security::{
     SECURITY_DESCRIPTOR_CONTROL, SE_DACL_PROTECTED,
 };
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY,
-    HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE,
+    RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD,
+    REG_OPTION_NON_VOLATILE,
 };
 
 use crate::{to_wide_null, WinError};
@@ -62,20 +63,24 @@ pub fn verify_and_repair_dir_acl(dir: &Path) -> Result<bool, WinError> {
 /// # Errors
 /// Returns `WinError` on unexpected registry errors (callers should fail closed).
 pub fn has_install_marker() -> Result<bool, WinError> {
-    let subkey_wide = to_wide_null(INSTALL_MARKER_SUBKEY);
+    has_install_marker_in(HKEY_LOCAL_MACHINE, INSTALL_MARKER_SUBKEY)
+}
+
+/// Removes `HKLM\SOFTWARE\AppLock` (used by admin-elevated `--reset-tamper` recovery).
+///
+/// # Errors
+/// Returns `WinError` if deleting the registry key fails (ignores `ERROR_FILE_NOT_FOUND`).
+pub fn clear_install_marker() -> Result<(), WinError> {
+    clear_install_marker_in(HKEY_LOCAL_MACHINE, INSTALL_MARKER_SUBKEY)
+}
+
+fn has_install_marker_in(root: HKEY, subkey: &str) -> Result<bool, WinError> {
+    let subkey_wide = to_wide_null(subkey);
     let value_wide = to_wide_null(INSTALL_MARKER_VALUE);
     let mut hkey: HKEY = ptr::null_mut();
 
     // SAFETY: `subkey_wide` is null-terminated; `hkey` receives the opened key handle on success.
-    let status = unsafe {
-        RegOpenKeyExW(
-            HKEY_LOCAL_MACHINE,
-            subkey_wide.as_ptr(),
-            0,
-            KEY_READ,
-            &raw mut hkey,
-        )
-    };
+    let status = unsafe { RegOpenKeyExW(root, subkey_wide.as_ptr(), 0, KEY_READ, &raw mut hkey) };
     if status == ERROR_FILE_NOT_FOUND {
         return Ok(false);
     }
@@ -121,7 +126,14 @@ pub fn has_install_marker() -> Result<bool, WinError> {
 /// # Errors
 /// Returns `WinError` if creating the registry key, setting its ACL, or writing the value fails.
 pub fn set_install_marker() -> Result<(), WinError> {
-    let subkey_wide = to_wide_null(INSTALL_MARKER_SUBKEY);
+    set_install_marker_in(HKEY_LOCAL_MACHINE, INSTALL_MARKER_SUBKEY)?;
+    // Re-apply protected DACL in case the key already existed with inherited permissions.
+    let named_obj = to_wide_null(INSTALL_MARKER_NAMED_OBJ);
+    apply_protected_sddl(&named_obj, SE_REGISTRY_KEY, SDDL_REG_SYSTEM_ADMIN_ONLY)
+}
+
+fn set_install_marker_in(root: HKEY, subkey: &str) -> Result<(), WinError> {
+    let subkey_wide = to_wide_null(subkey);
     let value_wide = to_wide_null(INSTALL_MARKER_VALUE);
     let sddl_wide = to_wide_null(SDDL_REG_SYSTEM_ADMIN_ONLY);
     let mut sd: PSECURITY_DESCRIPTOR = ptr::null_mut();
@@ -148,7 +160,7 @@ pub fn set_install_marker() -> Result<(), WinError> {
         };
         let mut hkey: HKEY = ptr::null_mut();
         let status = RegCreateKeyExW(
-            HKEY_LOCAL_MACHINE,
+            root,
             subkey_wide.as_ptr(),
             0,
             ptr::null(),
@@ -186,10 +198,21 @@ pub fn set_install_marker() -> Result<(), WinError> {
             });
         }
     }
+    Ok(())
+}
 
-    // Re-apply protected DACL in case the key already existed with inherited permissions.
-    let named_obj = to_wide_null(INSTALL_MARKER_NAMED_OBJ);
-    apply_protected_sddl(&named_obj, SE_REGISTRY_KEY, SDDL_REG_SYSTEM_ADMIN_ONLY)
+fn clear_install_marker_in(root: HKEY, subkey: &str) -> Result<(), WinError> {
+    let subkey_wide = to_wide_null(subkey);
+    // SAFETY: `subkey_wide` is null-terminated.
+    let status = unsafe { RegDeleteTreeW(root, subkey_wide.as_ptr()) };
+    if status == ERROR_SUCCESS || status == ERROR_FILE_NOT_FOUND {
+        Ok(())
+    } else {
+        Err(WinError {
+            code: status,
+            context: "RegDeleteTreeW",
+        })
+    }
 }
 
 fn is_dir_dacl_compliant(dir_wide: &[u16]) -> Result<bool, WinError> {
@@ -400,6 +423,20 @@ mod tests {
         assert!(!fourth);
 
         let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn install_marker_round_trip_uses_isolated_hkcu_key() -> Result<(), WinError> {
+        let test_subkey = format!(r"SOFTWARE\AppLockTest_{}", std::process::id());
+        clear_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?;
+        assert!(!has_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?);
+
+        set_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?;
+        assert!(has_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?);
+
+        clear_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?;
+        assert!(!has_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?);
         Ok(())
     }
 }

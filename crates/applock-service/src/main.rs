@@ -22,7 +22,9 @@ use applock_sys::process::{
     launch_hidden_command, resume_process, show_process_windows, suspend_process,
     terminate_process, wait_process_exit,
 };
-use applock_sys::security::{has_install_marker, set_install_marker, verify_and_repair_dir_acl};
+use applock_sys::security::{
+    clear_install_marker, has_install_marker, set_install_marker, verify_and_repair_dir_acl,
+};
 
 const DEFAULT_PIN: &str = "1234";
 const DEFAULT_WATCH_APPS: &[&str] = &[
@@ -44,7 +46,29 @@ fn main() -> ExitCode {
     if args.iter().any(|a| a == "--bench-m0") {
         return run_bench_m0();
     }
+    if args.iter().any(|a| a == "--reset-tamper") {
+        return run_reset_tamper();
+    }
     run_service(&args)
+}
+
+fn run_reset_tamper() -> ExitCode {
+    let config_path = default_config_path();
+    let log_path = tamper_log_path(&config_path);
+    if let Err(e) = clear_install_marker() {
+        eprintln!("Failed to clear install marker (run as Administrator): {e}");
+        return ExitCode::FAILURE;
+    }
+    let _ = std::fs::remove_file(&config_path);
+    let _ = std::fs::remove_file(config_path.with_extension("bin.bak"));
+    let _ = std::fs::remove_file(config_path.with_extension("bin.tmp"));
+    append_tamper_event(
+        &log_path,
+        now_unix_secs(),
+        "Admin-elevated reset completed (--reset-tamper); ready for fresh credential setup",
+    );
+    println!("AppLock tamper state reset. Restart AppLockService and set a new credential.");
+    ExitCode::SUCCESS
 }
 
 fn now_unix_secs() -> u64 {

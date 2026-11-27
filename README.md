@@ -6,6 +6,8 @@
 
 Lock individual Windows apps behind a PIN or password. Lightweight, event-driven, no background polling.
 
+> **Pre-release notice:** Pre-release, do not rely on it until `FR-AUTH-01` (first-run credential setup, removing the test PIN) is merged.
+
 ---
 
 ## Download
