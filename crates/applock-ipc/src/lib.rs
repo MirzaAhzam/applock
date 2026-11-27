@@ -195,6 +195,20 @@ pub enum Request {
         /// New PIN/password bytes (redacted in `Debug` output).
         new_secret: Vec<u8>,
     },
+    /// Set per-app locking mode (`grace_seconds == 0` for Always, `> 0` for Grace).
+    SetAppMode {
+        /// Per-request random nonce.
+        nonce: [u8; 16],
+        /// Normalized app identifier.
+        app_id: String,
+        /// Grace window in seconds (`0` = always ask).
+        grace_seconds: u64,
+    },
+    /// List locked apps along with their configured grace seconds.
+    ListAppModes {
+        /// Per-request random nonce.
+        nonce: [u8; 16],
+    },
 }
 
 impl fmt::Debug for Request {
@@ -234,6 +248,20 @@ impl fmt::Debug for Request {
                 .field("current_secret", &"[REDACTED]")
                 .field("new_secret", &"[REDACTED]")
                 .finish(),
+            Self::SetAppMode {
+                nonce,
+                app_id,
+                grace_seconds,
+            } => f
+                .debug_struct("SetAppMode")
+                .field("nonce", nonce)
+                .field("app_id", app_id)
+                .field("grace_seconds", grace_seconds)
+                .finish(),
+            Self::ListAppModes { nonce } => f
+                .debug_struct("ListAppModes")
+                .field("nonce", nonce)
+                .finish(),
         }
     }
 }
@@ -268,6 +296,13 @@ pub enum Response {
         nonce: [u8; 16],
         /// Currently locked app IDs.
         apps: Vec<String>,
+    },
+    /// Reply to `ListAppModes`.
+    AppModes {
+        /// Matching request nonce.
+        nonce: [u8; 16],
+        /// Pairs of `(app_id, grace_seconds)`.
+        apps: Vec<(String, u64)>,
     },
     /// Generic acknowledgement (`SetAppLocked`).
     Ack {
@@ -337,6 +372,20 @@ impl Request {
                 out.extend_from_slice(nonce);
                 write_bytes(&mut out, current_secret)?;
                 write_bytes(&mut out, new_secret)?;
+            }
+            Self::SetAppMode {
+                nonce,
+                app_id,
+                grace_seconds,
+            } => {
+                out.push(7);
+                out.extend_from_slice(nonce);
+                write_bytes(&mut out, app_id.as_bytes())?;
+                out.extend_from_slice(&grace_seconds.to_le_bytes());
+            }
+            Self::ListAppModes { nonce } => {
+                out.push(8);
+                out.extend_from_slice(nonce);
             }
         }
         if out.len() > MAX_MESSAGE_BYTES {
@@ -415,6 +464,29 @@ impl Request {
                     new_secret: new_s.to_vec(),
                 })
             }
+            7 => {
+                let (raw_id, tail) = read_bytes(rest)?;
+                if tail.len() != 8 {
+                    return Err(IpcError::MalformedPayload);
+                }
+                let app_id = std::str::from_utf8(raw_id)
+                    .map_err(|_| IpcError::MalformedPayload)?
+                    .to_string();
+                let grace_seconds = u64::from_le_bytes([
+                    tail[0], tail[1], tail[2], tail[3], tail[4], tail[5], tail[6], tail[7],
+                ]);
+                Ok(Self::SetAppMode {
+                    nonce,
+                    app_id,
+                    grace_seconds,
+                })
+            }
+            8 => {
+                if !rest.is_empty() {
+                    return Err(IpcError::TrailingBytes);
+                }
+                Ok(Self::ListAppModes { nonce })
+            }
             other => Err(IpcError::UnknownKind(other)),
         }
     }
@@ -456,6 +528,16 @@ impl Response {
                 out.extend_from_slice(&count.to_le_bytes());
                 for app in apps {
                     write_bytes(&mut out, app.as_bytes())?;
+                }
+            }
+            Self::AppModes { nonce, apps } => {
+                out.push(106);
+                out.extend_from_slice(nonce);
+                let count = u16::try_from(apps.len()).map_err(|_| IpcError::InvalidLength)?;
+                out.extend_from_slice(&count.to_le_bytes());
+                for (app, secs) in apps {
+                    write_bytes(&mut out, app.as_bytes())?;
+                    out.extend_from_slice(&secs.to_le_bytes());
                 }
             }
             Self::Ack { nonce, ok } => {
@@ -538,6 +620,32 @@ impl Response {
                     nonce,
                     ok: rest[0] == 1,
                 })
+            }
+            106 => {
+                if rest.len() < 2 {
+                    return Err(IpcError::MalformedPayload);
+                }
+                let count = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
+                let mut cursor = &rest[2..];
+                let mut apps = Vec::with_capacity(count.min(256));
+                for _ in 0..count {
+                    let (raw, next) = read_bytes(cursor)?;
+                    if next.len() < 8 {
+                        return Err(IpcError::MalformedPayload);
+                    }
+                    let app = std::str::from_utf8(raw)
+                        .map_err(|_| IpcError::MalformedPayload)?
+                        .to_string();
+                    let secs = u64::from_le_bytes([
+                        next[0], next[1], next[2], next[3], next[4], next[5], next[6], next[7],
+                    ]);
+                    apps.push((app, secs));
+                    cursor = &next[8..];
+                }
+                if !cursor.is_empty() {
+                    return Err(IpcError::TrailingBytes);
+                }
+                Ok(Self::AppModes { nonce, apps })
             }
             255 => {
                 if rest.len() != 2 {
@@ -663,6 +771,19 @@ mod tests {
         assert_eq!(Response::decode(&resp.encode()?)?, resp);
         let ack = Response::Ack { nonce, ok: true };
         assert_eq!(Response::decode(&ack.encode()?)?, ack);
+        let set_mode = Request::SetAppMode {
+            nonce,
+            app_id: "msedge.exe".to_string(),
+            grace_seconds: 300,
+        };
+        assert_eq!(Request::decode(&set_mode.encode()?)?, set_mode);
+        let list_modes = Request::ListAppModes { nonce };
+        assert_eq!(Request::decode(&list_modes.encode()?)?, list_modes);
+        let modes_resp = Response::AppModes {
+            nonce,
+            apps: vec![("msedge.exe".to_string(), 300)],
+        };
+        assert_eq!(Response::decode(&modes_resp.encode()?)?, modes_resp);
         Ok(())
     }
 

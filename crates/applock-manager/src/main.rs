@@ -4,7 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::process::ExitCode;
 use std::rc::Rc;
@@ -95,14 +95,35 @@ fn rgba_to_slint_image(rgba: Option<(u32, u32, Vec<u8>)>) -> Option<Image> {
     Some(Image::from_rgba8(buf))
 }
 
+fn format_mode_label(grace_seconds: u64) -> &'static str {
+    match grace_seconds {
+        0 => "Ask",
+        60 => "1m",
+        300 => "5m",
+        900 => "15m",
+        1800 => "30m",
+        _ => "Grace",
+    }
+}
+
+fn next_grace_seconds(current: i32) -> u64 {
+    match current {
+        0 => 60,
+        60 => 300,
+        300 => 900,
+        900 => 1800,
+        _ => 0,
+    }
+}
+
 fn build_app_entries(
     discovered: &[AppRowState],
-    locked_ids: &HashSet<String>,
+    locked_modes: &HashMap<String, u64>,
     query: &str,
 ) -> Vec<AppEntry> {
     let q = query.trim().to_ascii_lowercase();
     let mut seen = HashSet::with_capacity(discovered.len());
-    let mut entries = Vec::with_capacity(discovered.len() + locked_ids.len());
+    let mut entries = Vec::with_capacity(discovered.len() + locked_modes.len());
 
     for row in discovered {
         seen.insert(row.id.clone());
@@ -111,21 +132,27 @@ fn build_app_entries(
             || row.id.to_ascii_lowercase().contains(&q)
             || row.path.to_ascii_lowercase().contains(&q);
         if matches {
+            let grace = locked_modes.get(&row.id).copied();
+            let secs = grace.unwrap_or(0);
             entries.push(AppEntry {
                 id: row.id.as_str().into(),
                 name: row.name.as_str().into(),
                 path: row.path.as_str().into(),
                 icon: row.icon.clone().unwrap_or_default(),
                 has_icon: row.icon.is_some(),
-                locked: locked_ids.contains(&row.id),
+                locked: grace.is_some(),
+                grace_seconds: i32::try_from(secs).unwrap_or(0),
+                mode_label: format_mode_label(secs).into(),
             });
         }
     }
 
-    let mut custom_locked: Vec<&String> =
-        locked_ids.iter().filter(|id| !seen.contains(*id)).collect();
-    custom_locked.sort();
-    for id in custom_locked {
+    let mut custom_locked: Vec<(&String, &u64)> = locked_modes
+        .iter()
+        .filter(|(id, _)| !seen.contains(*id))
+        .collect();
+    custom_locked.sort_by(|a, b| a.0.cmp(b.0));
+    for (id, &secs) in custom_locked {
         if q.is_empty() || id.to_ascii_lowercase().contains(&q) {
             entries.push(AppEntry {
                 id: id.as_str().into(),
@@ -134,6 +161,8 @@ fn build_app_entries(
                 icon: Image::default(),
                 has_icon: false,
                 locked: true,
+                grace_seconds: i32::try_from(secs).unwrap_or(0),
+                mode_label: format_mode_label(secs).into(),
             });
         }
     }
@@ -172,23 +201,26 @@ fn apply_strings(window: &ManagerWindow, lang: Language) {
     window.set_limits_disk(mgr_s.limits_disk.into());
 }
 
-fn fetch_locked_apps() -> HashSet<String> {
+fn fetch_locked_apps() -> HashMap<String, u64> {
     let mut nonce = [0_u8; 16];
     if fill_random(&mut nonce).is_err() {
-        return HashSet::new();
+        return HashMap::new();
     }
-    match send_ipc(&Request::ListLockedApps { nonce }) {
-        Some(Response::LockedApps {
+    match send_ipc(&Request::ListAppModes { nonce }) {
+        Some(Response::AppModes {
             nonce: r_nonce,
             apps,
-        }) if r_nonce == nonce => apps.into_iter().map(|s| s.to_ascii_lowercase()).collect(),
-        _ => HashSet::new(),
+        }) if r_nonce == nonce => apps
+            .into_iter()
+            .map(|(id, secs)| (id.to_ascii_lowercase(), secs))
+            .collect(),
+        _ => HashMap::new(),
     }
 }
 
 fn refresh_app_model(
     window: &ManagerWindow,
-    locked_cache: &Rc<RefCell<HashSet<String>>>,
+    locked_cache: &Rc<RefCell<HashMap<String, u64>>>,
     query: &str,
 ) {
     let locked = fetch_locked_apps();
@@ -197,7 +229,7 @@ fn refresh_app_model(
     window.set_apps(ModelRc::new(VecModel::from(entries)));
 }
 
-fn start_async_discovery(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashSet<String>>>) {
+fn start_async_discovery(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashMap<String, u64>>>) {
     window.set_loading_apps(true);
     let weak_bg = window.as_weak();
     let _ = locked_cache;
@@ -232,7 +264,7 @@ fn start_async_discovery(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashS
 fn wire_gate_callbacks(
     window: &ManagerWindow,
     current_lang: &Rc<Cell<Language>>,
-    locked_cache: &Rc<RefCell<HashSet<String>>>,
+    locked_cache: &Rc<RefCell<HashMap<String, u64>>>,
 ) {
     let weak = window.as_weak();
     let lang_cell = Rc::clone(current_lang);
@@ -288,7 +320,7 @@ fn wire_gate_callbacks(
     });
 }
 
-fn wire_apps_callbacks(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashSet<String>>>) {
+fn wire_apps_callbacks(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashMap<String, u64>>>) {
     let weak = window.as_weak();
     let lock_ref = Rc::clone(locked_cache);
     window.on_search_changed(move |query| {
@@ -345,6 +377,38 @@ fn wire_apps_callbacks(window: &ManagerWindow, locked_cache: &Rc<RefCell<HashSet
             refresh_app_model(&w, &lock_ref, w.get_search_query().as_str());
         }
     });
+
+    let weak = window.as_weak();
+    let lock_ref = Rc::clone(locked_cache);
+    window.on_cycle_app_mode(move |app_id, current_secs| {
+        let Some(w) = weak.upgrade() else {
+            return;
+        };
+        let normalized = app_id.to_ascii_lowercase();
+        let next_secs = next_grace_seconds(current_secs);
+        if send_set_app_mode(&normalized, next_secs) {
+            refresh_app_model(&w, &lock_ref, w.get_search_query().as_str());
+        }
+    });
+}
+
+fn send_set_app_mode(app_id: &str, grace_seconds: u64) -> bool {
+    let mut nonce = [0_u8; 16];
+    if fill_random(&mut nonce).is_err() {
+        return false;
+    }
+    let req = Request::SetAppMode {
+        nonce,
+        app_id: app_id.to_string(),
+        grace_seconds,
+    };
+    matches!(
+        send_ipc(&req),
+        Some(Response::Ack {
+            nonce: r_nonce,
+            ok: true
+        }) if r_nonce == nonce
+    )
 }
 
 fn send_set_app_locked(app_id: &str, locked: bool) -> bool {
@@ -461,7 +525,7 @@ fn main() -> ExitCode {
 
     let current_lang = Rc::new(Cell::new(args.lang));
     let dark_mode = Rc::new(Cell::new(args.dark));
-    let locked_cache = Rc::new(RefCell::new(HashSet::<String>::new()));
+    let locked_cache = Rc::new(RefCell::new(HashMap::<String, u64>::new()));
 
     window.global::<Tokens>().set_dark_mode(args.dark);
     apply_strings(&window, args.lang);
@@ -496,13 +560,15 @@ mod tests {
                 icon: None,
             },
         ];
-        let locked = HashSet::from(["whatsapp.exe".to_string()]);
+        let locked = HashMap::from([("whatsapp.exe".to_string(), 300)]);
         let all = build_app_entries(&list, &locked, "");
         assert_eq!(all.len(), 2);
         let filtered = build_app_entries(&list, &locked, "whats");
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name.as_str(), "WhatsApp");
         assert!(filtered[0].locked);
+        assert_eq!(filtered[0].grace_seconds, 300);
+        assert_eq!(filtered[0].mode_label.as_str(), "5m");
     }
 
     #[test]
