@@ -501,23 +501,7 @@ impl Request {
                     new_secret: new_s.to_vec(),
                 })
             }
-            7 => {
-                let (raw_id, tail) = read_bytes(rest)?;
-                if tail.len() != 8 {
-                    return Err(IpcError::MalformedPayload);
-                }
-                let app_id = std::str::from_utf8(raw_id)
-                    .map_err(|_| IpcError::MalformedPayload)?
-                    .to_string();
-                let grace_seconds = u64::from_le_bytes([
-                    tail[0], tail[1], tail[2], tail[3], tail[4], tail[5], tail[6], tail[7],
-                ]);
-                Ok(Self::SetAppMode {
-                    nonce,
-                    app_id,
-                    grace_seconds,
-                })
-            }
+            7 => decode_set_app_mode(nonce, rest),
             8 => {
                 if !rest.is_empty() {
                     return Err(IpcError::TrailingBytes);
@@ -683,67 +667,8 @@ impl Response {
                     ok: rest[0] == 1,
                 })
             }
-            106 => {
-                if rest.len() < 2 {
-                    return Err(IpcError::MalformedPayload);
-                }
-                let count = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
-                let mut cursor = &rest[2..];
-                let mut apps = Vec::with_capacity(count.min(256));
-                for _ in 0..count {
-                    let (raw, next) = read_bytes(cursor)?;
-                    if next.len() < 8 {
-                        return Err(IpcError::MalformedPayload);
-                    }
-                    let app = std::str::from_utf8(raw)
-                        .map_err(|_| IpcError::MalformedPayload)?
-                        .to_string();
-                    let secs = u64::from_le_bytes([
-                        next[0], next[1], next[2], next[3], next[4], next[5], next[6], next[7],
-                    ]);
-                    apps.push((app, secs));
-                    cursor = &next[8..];
-                }
-                if !cursor.is_empty() {
-                    return Err(IpcError::TrailingBytes);
-                }
-                Ok(Self::AppModes { nonce, apps })
-            }
-            107 => {
-                if rest.len() < 2 {
-                    return Err(IpcError::MalformedPayload);
-                }
-                let count = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
-                let mut cursor = &rest[2..];
-                let mut entries = Vec::with_capacity(count.min(256));
-                for _ in 0..count {
-                    if cursor.len() < 8 {
-                        return Err(IpcError::MalformedPayload);
-                    }
-                    let ts = u64::from_le_bytes([
-                        cursor[0], cursor[1], cursor[2], cursor[3], cursor[4], cursor[5],
-                        cursor[6], cursor[7],
-                    ]);
-                    let (k_b, c1) = read_bytes(&cursor[8..])?;
-                    let (t_b, c2) = read_bytes(c1)?;
-                    let (r_b, c3) = read_bytes(c2)?;
-                    let kind = std::str::from_utf8(k_b)
-                        .map_err(|_| IpcError::MalformedPayload)?
-                        .to_string();
-                    let target = std::str::from_utf8(t_b)
-                        .map_err(|_| IpcError::MalformedPayload)?
-                        .to_string();
-                    let result = std::str::from_utf8(r_b)
-                        .map_err(|_| IpcError::MalformedPayload)?
-                        .to_string();
-                    entries.push((ts, kind, target, result));
-                    cursor = c3;
-                }
-                if !cursor.is_empty() {
-                    return Err(IpcError::TrailingBytes);
-                }
-                Ok(Self::ActivityLogEntries { nonce, entries })
-            }
+            106 => decode_app_modes(nonce, rest),
+            107 => decode_activity_entries(nonce, rest),
             255 => {
                 if rest.len() != 2 {
                     return Err(IpcError::MalformedPayload);
@@ -754,6 +679,86 @@ impl Response {
             other => Err(IpcError::UnknownKind(other)),
         }
     }
+}
+
+fn decode_set_app_mode(nonce: [u8; 16], rest: &[u8]) -> Result<Request, IpcError> {
+    let (raw_id, tail) = read_bytes(rest)?;
+    if tail.len() != 8 {
+        return Err(IpcError::MalformedPayload);
+    }
+    let app_id = std::str::from_utf8(raw_id)
+        .map_err(|_| IpcError::MalformedPayload)?
+        .to_string();
+    let grace_seconds = u64::from_le_bytes([
+        tail[0], tail[1], tail[2], tail[3], tail[4], tail[5], tail[6], tail[7],
+    ]);
+    Ok(Request::SetAppMode {
+        nonce,
+        app_id,
+        grace_seconds,
+    })
+}
+
+fn decode_app_modes(nonce: [u8; 16], rest: &[u8]) -> Result<Response, IpcError> {
+    if rest.len() < 2 {
+        return Err(IpcError::MalformedPayload);
+    }
+    let count = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
+    let mut cursor = &rest[2..];
+    let mut apps = Vec::with_capacity(count.min(256));
+    for _ in 0..count {
+        let (raw, next) = read_bytes(cursor)?;
+        if next.len() < 8 {
+            return Err(IpcError::MalformedPayload);
+        }
+        let app = std::str::from_utf8(raw)
+            .map_err(|_| IpcError::MalformedPayload)?
+            .to_string();
+        let secs = u64::from_le_bytes([
+            next[0], next[1], next[2], next[3], next[4], next[5], next[6], next[7],
+        ]);
+        apps.push((app, secs));
+        cursor = &next[8..];
+    }
+    if !cursor.is_empty() {
+        return Err(IpcError::TrailingBytes);
+    }
+    Ok(Response::AppModes { nonce, apps })
+}
+
+fn decode_activity_entries(nonce: [u8; 16], rest: &[u8]) -> Result<Response, IpcError> {
+    if rest.len() < 2 {
+        return Err(IpcError::MalformedPayload);
+    }
+    let count = usize::from(u16::from_le_bytes([rest[0], rest[1]]));
+    let mut cursor = &rest[2..];
+    let mut entries = Vec::with_capacity(count.min(256));
+    for _ in 0..count {
+        if cursor.len() < 8 {
+            return Err(IpcError::MalformedPayload);
+        }
+        let ts = u64::from_le_bytes([
+            cursor[0], cursor[1], cursor[2], cursor[3], cursor[4], cursor[5], cursor[6], cursor[7],
+        ]);
+        let (k_b, c1) = read_bytes(&cursor[8..])?;
+        let (t_b, c2) = read_bytes(c1)?;
+        let (r_b, c3) = read_bytes(c2)?;
+        let kind = std::str::from_utf8(k_b)
+            .map_err(|_| IpcError::MalformedPayload)?
+            .to_string();
+        let target = std::str::from_utf8(t_b)
+            .map_err(|_| IpcError::MalformedPayload)?
+            .to_string();
+        let result = std::str::from_utf8(r_b)
+            .map_err(|_| IpcError::MalformedPayload)?
+            .to_string();
+        entries.push((ts, kind, target, result));
+        cursor = c3;
+    }
+    if !cursor.is_empty() {
+        return Err(IpcError::TrailingBytes);
+    }
+    Ok(Response::ActivityLogEntries { nonce, entries })
 }
 
 fn parse_header(bytes: &[u8]) -> Result<(u8, [u8; 16], &[u8]), IpcError> {
