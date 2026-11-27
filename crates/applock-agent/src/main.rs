@@ -100,7 +100,7 @@ fn main() -> ExitCode {
     let self_pid = std::process::id();
 
     if let Err(e) = run_window_watcher(move |ev| {
-        handle_window_event(&active_overlays, self_pid, ev);
+        handle_window_event(&active_overlays, self_pid, &ev);
     }) {
         eprintln!("SetWinEventHook failed: {e}");
         return ExitCode::FAILURE;
@@ -112,7 +112,7 @@ fn main() -> ExitCode {
 fn handle_window_event(
     active_overlays: &Arc<Mutex<HashMap<isize, ActiveOverlay>>>,
     self_pid: u32,
-    ev: applock_sys::winevent::WindowEvent,
+    ev: &applock_sys::winevent::WindowEvent,
 ) {
     if ev.pid == 0 || ev.pid == self_pid {
         return;
@@ -150,7 +150,7 @@ fn handle_window_event(
             }
         }
         WindowEventKind::Foreground => {
-            handle_foreground_event(active_overlays, &ev, exe_name);
+            handle_foreground_event(active_overlays, ev, exe_name);
         }
     }
 }
