@@ -22,10 +22,19 @@ jobs:
       tag_name: ${{ steps.rp.outputs.tag_name }}
       version: ${{ steps.rp.outputs.version }}
     steps:
+      - name: Verify RELEASE_BOT_TOKEN is configured
+        env:
+          BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+        run: |
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "::error::RELEASE_BOT_TOKEN secret is missing or empty. Add a fine-grained PAT with Contents (read/write) and Pull requests (read/write) as RELEASE_BOT_TOKEN in repository Actions secrets."
+            exit 1
+          fi
+
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         id: rp
         with:
-          token: ${{ secrets.RELEASE_BOT_TOKEN != '' && secrets.RELEASE_BOT_TOKEN || github.token }}
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
