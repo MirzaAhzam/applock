@@ -23,8 +23,7 @@ use windows_sys::Win32::Security::{
 };
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegCreateKeyExW, RegDeleteTreeW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW,
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD,
-    REG_OPTION_NON_VOLATILE,
+    HKEY, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WRITE, REG_DWORD, REG_OPTION_NON_VOLATILE,
 };
 
 use crate::{to_wide_null, WinError};
@@ -428,6 +427,7 @@ mod tests {
 
     #[test]
     fn install_marker_round_trip_uses_isolated_hkcu_key() -> Result<(), WinError> {
+        use windows_sys::Win32::System::Registry::HKEY_CURRENT_USER;
         let test_subkey = format!(r"SOFTWARE\AppLockTest_{}", std::process::id());
         clear_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?;
         assert!(!has_install_marker_in(HKEY_CURRENT_USER, &test_subkey)?);
