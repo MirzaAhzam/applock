@@ -38,6 +38,28 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - name: Sync Cargo.lock on release-please PR branch
+        if: ${{ steps.rp.outputs.release_created != 'true' && steps.rp.outputs.pr != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: release-please--branches--main--components--applock
+          token: ${{ secrets.RELEASE_BOT_TOKEN }}
+          persist-credentials: true
+
+      - name: Commit updated Cargo.lock to release PR
+        if: ${{ steps.rp.outputs.release_created != 'true' && steps.rp.outputs.pr != '' }}
+        run: |
+          if ! git rev-parse --verify HEAD >/dev/null 2>&1; then exit 0; fi
+          rustup toolchain install
+          cargo update --workspace
+          if ! git diff --quiet Cargo.lock; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add Cargo.lock
+            git commit -m "chore(release): sync Cargo.lock"
+            git push
+          fi
+
   build:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created == 'true' }}
