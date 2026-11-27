@@ -38,8 +38,20 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
+      - name: Check if release-please PR branch exists
+        id: check_branch
+        if: ${{ steps.rp.outputs.release_created != 'true' }}
+        env:
+          BOT_TOKEN: ${{ secrets.RELEASE_BOT_TOKEN }}
+        run: |
+          if git ls-remote --exit-code --heads "https://x-access-token:${BOT_TOKEN}@github.com/${{ github.repository }}.git" release-please--branches--main--components--applock >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Sync Cargo.lock on release-please PR branch
-        if: ${{ steps.rp.outputs.release_created != 'true' && steps.rp.outputs.pr != '' }}
+        if: ${{ steps.rp.outputs.release_created != 'true' && steps.check_branch.outputs.exists == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: release-please--branches--main--components--applock
@@ -47,7 +59,7 @@ jobs:
           persist-credentials: true
 
       - name: Commit updated Cargo.lock to release PR
-        if: ${{ steps.rp.outputs.release_created != 'true' && steps.rp.outputs.pr != '' }}
+        if: ${{ steps.rp.outputs.release_created != 'true' && steps.check_branch.outputs.exists == 'true' }}
         run: |
           if ! git rev-parse --verify HEAD >/dev/null 2>&1; then exit 0; fi
           rustup toolchain install
