@@ -192,7 +192,7 @@ fn refresh_app_model(
     query: &str,
 ) {
     let locked = fetch_locked_apps();
-    *locked_cache.borrow_mut() = locked.clone();
+    (*locked_cache.borrow_mut()).clone_from(&locked);
     let entries = DISCOVERED_APPS.with(|cell| build_app_entries(&cell.borrow(), &locked, query));
     window.set_apps(ModelRc::new(VecModel::from(entries)));
 }
